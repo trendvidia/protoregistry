@@ -9,6 +9,56 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.70.1] - 2026-05-06
+
+### Added
+
+- **`client.WithFallback(files, types)`** — configure parent
+  `*protoregistry.NamespacedFiles` / `*NamespacedTypes` registries
+  that the Resolver falls back to on a local miss. The
+  namespace-wide aggregate and every per-schema view inherit the
+  same parent, so well-known or shared types are visible from every
+  lookup tier (`FindDescriptorByName`, `FindMessageByName`,
+  `FindFileByPath`, `FindExtensionByName`, `FindExtensionByNumber`,
+  and `SchemaResolver.FindMessageByName`).
+- **`client.WithParent(parent *Resolver)`** — convenience that
+  chains another Resolver as the parent (passes its `nsFiles` /
+  `nsTypes` through as fallback). Useful for modeling a "common
+  types" namespace as the parent of per-tenant namespaces.
+- **`client.WithGlobalFallback()`** — fall back to upstream
+  `protoregistry.GlobalFiles` / `GlobalTypes` so the Resolver can
+  resolve both registry-managed and statically-compiled proto types
+  through the same API.
+
+### Changed
+
+- The Resolver-level `Find*` methods no longer short-circuit to
+  `NotFound` on a local-name-index miss. They now delegate to the
+  Resolver's `nsFiles` / `nsTypes` aggregates, which transparently
+  walk the configured parent chain via the fork's
+  hierarchical-fallback machinery. Behavior is unchanged when no
+  fallback is configured (no parent → still `NotFound`).
+
+### Internal
+
+- `client/snapshot.go`: per-schema `*NamespacedFiles` /
+  `*NamespacedTypes` are constructed with `cfg.parentFiles` /
+  `cfg.parentTypes` as parents, so per-schema lookups reach the
+  fallback chain too.
+- `client/client.go`: `Pin` inherits the parent's fallback
+  configuration so well-known / shared types stay visible in
+  pinned views. Documented the caveat that a pinned view over a
+  still-refreshing parent will see new parent entries surface after
+  Pin returns; callers wanting a fully-frozen pin must build an
+  independent frozen parent and pass it via `WithFallback`.
+
+### Tests
+
+- `TestIntegration/WithFallback_ResolvesParentTypes` exercises the
+  full fallback chain across all lookup tiers, including
+  `SchemaResolver`, with a "commons" namespace configured as parent
+  of a "fallback" namespace via `client.WithParent`.
+
 ## [0.70.0] - 2026-05-06
 
 First public release. Aligns with the `v0.70.0` cut of the trendvidia
