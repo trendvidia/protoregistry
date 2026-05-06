@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
