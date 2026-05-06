@@ -1,0 +1,36 @@
+# Local development stack only. The credentials below are intentionally
+# trivial; do not reuse them in any deployment that is reachable from
+# outside your machine.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: protoregistry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD env var}
+      POSTGRES_DB: protoregistry
+#    ports:
+#      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U protoregistry -d protoregistry"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  protoregistry:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://protoregistry:${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD env var}@postgres:5432/protoregistry?sslmode=disable
+    command:
+      - serve
+      - --listen=:50051
+      - --migrate
+    ports:
+      - "50051:50051"
+
+volumes:
+  postgres-data:
