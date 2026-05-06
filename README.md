@@ -367,6 +367,46 @@ Behavior:
 - **`r.Schema(schemaID)`** narrows lookups to one schema in the namespace — cheaper and immune to cross-schema FQN collisions.
 - **Fail-loud collisions.** If two schemas in the namespace export the same fully-qualified type name, `client.New` returns an error rather than silently picking one.
 
+#### Hierarchical fallback
+
+A Resolver can fall back to a parent registry when a local lookup misses. Useful for shared / well-known types across multiple namespaces, or for chaining a tenant Resolver behind a "common types" Resolver. Both the namespace-wide aggregate (`FindFileByPath`, `FindExtensionByNumber`) and each per-schema view inherit the same parent, so the fallback is reachable from every lookup tier.
+
+Three options:
+
+```go
+// 1. Explicit parent registries — most general.
+client.WithFallback(parentFiles, parentTypes)
+
+// 2. Chain another Resolver as the parent. Convenience over (1) — passes
+//    the parent's nsFiles / nsTypes through. The parent must outlive
+//    every child.
+client.WithParent(commonsResolver)
+
+// 3. Fall back to upstream protoregistry.GlobalFiles / GlobalTypes,
+//    which have generated proto types compiled into the binary.
+client.WithGlobalFallback()
+```
+
+Example — every per-tenant Resolver inherits a `commons` namespace:
+
+```go
+commons, _ := client.Dial(ctx, addr, "commons", client.WithRefreshInterval(0))
+defer commons.Close()
+
+billing, _ := client.Dial(ctx, addr, "billing",
+    client.WithParent(commons),
+)
+defer billing.Close()
+
+// "shared.Trace" lives in the commons namespace; billing resolves it
+// via the fallback chain.
+desc, _ := billing.FindDescriptorByName("shared.Trace")
+```
+
+Local entries always shadow the parent — there is no fail-loud collision check across the parent boundary. Two consecutive Resolvers can register the same FQN if it appears in both the local namespace and the parent; the local version wins.
+
+Pinned Resolvers (returned by `r.Pin(...)`) inherit the parent's fallback chain. If the parent refreshes, the pinned view sees the new parent state via fallback even though its own local schemas are frozen. For a fully-frozen view, build an independent frozen parent and pass it via `WithFallback`.
+
 Pairs cleanly with [`protowire-go`](https://github.com/trendvidia/protowire-go) (the `pxf` / `sbe` codecs accept any `protoreflect.MessageDescriptor`), `protojson`, `anypb`, and `dynamicpb` without adapter code:
 
 ```go

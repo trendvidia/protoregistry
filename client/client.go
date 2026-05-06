@@ -110,8 +110,8 @@ func New(ctx context.Context, conn *grpc.ClientConn, namespace string, opts ...O
 		ns:      namespace,
 		cfg:     cfg,
 		logger:  resolveLogger(cfg.logger),
-		nsFiles: protoregistry.NewNamespacedFiles(nil),
-		nsTypes: protoregistry.NewNamespacedTypes(nil),
+		nsFiles: protoregistry.NewNamespacedFiles(cfg.parentFiles),
+		nsTypes: protoregistry.NewNamespacedTypes(cfg.parentTypes),
 	}
 
 	if err := r.populate(ctx); err != nil {
@@ -203,6 +203,12 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 		return nil, errors.New("protoregistry/client: empty pin map")
 	}
 
+	// Pinned Resolver inherits the parent's fallback configuration so
+	// well-known / shared types remain visible. Pin doesn't refresh, so
+	// inheriting a live parent that does refresh means the pinned view
+	// can still see new entries surface in the parent over time —
+	// callers wanting a fully-frozen view should construct an
+	// independent frozen parent and pass it via [WithFallback].
 	pinned := &Resolver{
 		conn:     r.conn,
 		ownsConn: false,
@@ -210,8 +216,8 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 		ns:       r.ns,
 		cfg:      r.cfg,
 		logger:   r.logger,
-		nsFiles:  protoregistry.NewNamespacedFiles(nil),
-		nsTypes:  protoregistry.NewNamespacedTypes(nil),
+		nsFiles:  protoregistry.NewNamespacedFiles(r.cfg.parentFiles),
+		nsTypes:  protoregistry.NewNamespacedTypes(r.cfg.parentTypes),
 	}
 	pinned.cfg.refresh = 0
 	pinned.cfg.token = r.cfg.token
@@ -249,20 +255,23 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 // --- protoregistry.MessageTypeResolver ---
 
 // FindMessageByName looks up a message type by its fully-qualified name
-// across all schemas in the namespace.
+// across all schemas in the namespace. Falls back to the parent
+// registry chain when configured via [WithFallback] / [WithParent] /
+// [WithGlobalFallback].
 //
-// Returns [protoregistry.NotFound] when no schema in the namespace
-// defines the name.
+// Returns [protoregistry.NotFound] when neither the local namespace
+// nor any configured parent defines the name.
 func (r *Resolver) FindMessageByName(name protoreflect.FullName) (protoreflect.MessageType, error) {
 	snap := r.snapshot.Load()
-	if snap == nil {
-		return nil, protoregistry.NotFound
+	if snap != nil {
+		if ss, ok := snap.schemaFor(name); ok {
+			return ss.types.FindMessageByName(name)
+		}
 	}
-	ss, ok := snap.schemaFor(name)
-	if !ok {
-		return nil, protoregistry.NotFound
+	if r.nsTypes != nil {
+		return r.nsTypes.FindMessageByName(name)
 	}
-	return ss.types.FindMessageByName(name)
+	return nil, protoregistry.NotFound
 }
 
 // FindMessageByURL looks up a message type by its type URL (e.g.
@@ -278,17 +287,19 @@ func (r *Resolver) FindMessageByURL(url string) (protoreflect.MessageType, error
 
 // --- protoregistry.ExtensionTypeResolver ---
 
-// FindExtensionByName looks up an extension by its fully-qualified name.
+// FindExtensionByName looks up an extension by its fully-qualified
+// name. Falls back to the parent registry chain when configured.
 func (r *Resolver) FindExtensionByName(name protoreflect.FullName) (protoreflect.ExtensionType, error) {
 	snap := r.snapshot.Load()
-	if snap == nil {
-		return nil, protoregistry.NotFound
+	if snap != nil {
+		if ss, ok := snap.schemaFor(name); ok {
+			return ss.types.FindExtensionByName(name)
+		}
 	}
-	ss, ok := snap.schemaFor(name)
-	if !ok {
-		return nil, protoregistry.NotFound
+	if r.nsTypes != nil {
+		return r.nsTypes.FindExtensionByName(name)
 	}
-	return ss.types.FindExtensionByName(name)
+	return nil, protoregistry.NotFound
 }
 
 // FindExtensionByNumber looks up an extension by the message it extends
@@ -315,17 +326,19 @@ func (r *Resolver) FindFileByPath(path string) (protoreflect.FileDescriptor, err
 }
 
 // FindDescriptorByName looks up any descriptor (message, enum, service,
-// extension, etc.) by its fully-qualified name.
+// extension, etc.) by its fully-qualified name. Falls back to the
+// parent registry chain when configured.
 func (r *Resolver) FindDescriptorByName(name protoreflect.FullName) (protoreflect.Descriptor, error) {
 	snap := r.snapshot.Load()
-	if snap == nil {
-		return nil, protoregistry.NotFound
+	if snap != nil {
+		if ss, ok := snap.schemaFor(name); ok {
+			return ss.files.FindDescriptorByName(name)
+		}
 	}
-	ss, ok := snap.schemaFor(name)
-	if !ok {
-		return nil, protoregistry.NotFound
+	if r.nsFiles != nil {
+		return r.nsFiles.FindDescriptorByName(name)
 	}
-	return ss.files.FindDescriptorByName(name)
+	return nil, protoregistry.NotFound
 }
 
 // --- ergonomics ---
@@ -388,6 +401,15 @@ type config struct {
 	schemas []string
 	logger  *slog.Logger
 	token   string // only honored by Dial; New callers configure auth on the conn
+
+	// Optional parent registries for hierarchical fallback. When set,
+	// the namespace-wide nsFiles / nsTypes and each per-schema
+	// NamespacedFiles / NamespacedTypes are constructed as children of
+	// these parents — local lookups take precedence; misses fall
+	// through to the parent. See WithFallback / WithParent /
+	// WithGlobalFallback.
+	parentFiles *protoregistry.NamespacedFiles
+	parentTypes *protoregistry.NamespacedTypes
 }
 
 func defaultConfig() config {
@@ -427,6 +449,70 @@ func WithLogger(l *slog.Logger) Option {
 // is more flexible and idiomatic.
 func WithToken(token string) Option {
 	return func(c *config) { c.token = token }
+}
+
+// WithFallback configures parent registries that the Resolver falls
+// back to when a local lookup misses. The Resolver's namespace-wide
+// aggregate (FindFileByPath / FindExtensionByNumber) and each
+// per-schema view (Schema(...) lookups) both inherit the same parent,
+// so well-known or shared types are visible at every lookup tier.
+//
+// Parent registries are read-only from the Resolver's perspective; the
+// Resolver never writes to them, so callers manage their lifecycle.
+// Passing the same pair to multiple Resolvers shares the parent across
+// namespaces.
+//
+// Calling WithFallback twice — or combining it with [WithParent] /
+// [WithGlobalFallback] — overrides the previous setting (last writer
+// wins).
+func WithFallback(files *protoregistry.NamespacedFiles, types *protoregistry.NamespacedTypes) Option {
+	return func(c *config) {
+		c.parentFiles = files
+		c.parentTypes = types
+	}
+}
+
+// WithParent makes this Resolver fall back to another Resolver's
+// namespace-wide aggregate when local lookups miss. Useful for
+// modeling a "common types" namespace as the parent of per-tenant
+// namespaces — the parent Resolver continues to refresh independently
+// and the child sees its current state via the fork's fallback chain.
+//
+// The parent must outlive every child. Closing the parent does not
+// invalidate the child's fallback chain — operations after the parent
+// is closed will still attempt to read its registries — so call sites
+// should be careful with lifecycle ordering.
+//
+// Equivalent to calling [WithFallback] with the parent's nsFiles /
+// nsTypes.
+func WithParent(parent *Resolver) Option {
+	return func(c *config) {
+		if parent == nil {
+			return
+		}
+		c.parentFiles = parent.nsFiles
+		c.parentTypes = parent.nsTypes
+	}
+}
+
+// WithGlobalFallback configures the Resolver to fall back to upstream
+// [protoregistry.GlobalFiles] / [protoregistry.GlobalTypes] when a
+// lookup misses. Useful when the binary also has generated proto
+// types compiled in (which auto-register into the globals at init
+// time); the Resolver can then resolve both registry-managed and
+// statically-known types through the same lookup paths.
+//
+// The globals are read-only through this fallback — the Resolver
+// never writes to them.
+//
+// Equivalent to calling [WithFallback] with a pair of global-wrapping
+// registries derived from [protoregistry.NewNamespaceOverGlobal].
+func WithGlobalFallback() Option {
+	return func(c *config) {
+		ns := protoregistry.NewNamespaceOverGlobal()
+		c.parentFiles = ns.Files
+		c.parentTypes = ns.Types
+	}
 }
 
 // --- internal helpers ---

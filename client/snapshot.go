@@ -48,11 +48,11 @@ type nsSnapshot struct {
 // UnregisterExtension on. Captured once during fetchSchema so the
 // removal path doesn't have to walk descriptors a second time.
 type schemaSnapshot struct {
-	schemaID         string
-	version          uint64
-	files            *protoregistry.NamespacedFiles
-	types            *protoregistry.NamespacedTypes
-	aggFingerprint   aggFingerprint
+	schemaID       string
+	version        uint64
+	files          *protoregistry.NamespacedFiles
+	types          *protoregistry.NamespacedTypes
+	aggFingerprint aggFingerprint
 }
 
 // aggFingerprint is the set of identifiers a schema contributes to the
@@ -314,8 +314,12 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 		return nil, fmt.Errorf("compiling descriptors for %s/%s@%d: %w", r.ns, schemaID, version, err)
 	}
 
-	files := protoregistry.NewNamespacedFiles(nil)
-	types := protoregistry.NewNamespacedTypes(nil)
+	// Per-schema views inherit the same parent as the namespace-wide
+	// aggregate (configured via WithFallback / WithParent /
+	// WithGlobalFallback), so SchemaResolver lookups also see
+	// well-known and shared types declared at the parent level.
+	files := protoregistry.NewNamespacedFiles(r.cfg.parentFiles)
+	types := protoregistry.NewNamespacedTypes(r.cfg.parentTypes)
 	var fp aggFingerprint
 	var rangeErr error
 	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {

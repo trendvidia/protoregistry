@@ -201,6 +201,65 @@ func TestIntegration(t *testing.T) {
 		require.ErrorIs(t, err, protoregistry.NotFound)
 	})
 
+	t.Run("WithFallback_ResolvesParentTypes", func(t *testing.T) {
+		// A child Resolver with WithFallback configured must resolve
+		// types that exist only in the parent registry — verifying the
+		// fork's hierarchical fallback is wired through every lookup
+		// tier (FindMessageByName, FindFileByPath,
+		// FindDescriptorByName) and reachable via SchemaResolver too.
+		const ns = "fallback"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		// Build a parent registry by repurposing a separate Resolver
+		// pointed at a different namespace ("commons") that exposes
+		// types we want every child to inherit.
+		srv.PublishAndPromote(t, "commons", "shared", map[string][]byte{
+			"shared.proto": []byte(`syntax = "proto3"; package shared; message Trace { string id = 1; }`),
+		})
+		parent, err := client.New(t.Context(), srv.Conn, "commons", client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = parent.Close() })
+
+		// Child Resolver: tracks "fallback" namespace, falls back to
+		// the "commons" parent for any miss.
+		child, err := client.New(t.Context(), srv.Conn, ns,
+			client.WithRefreshInterval(0),
+			client.WithParent(parent),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+
+		// Local lookup hits the child's own namespace.
+		_, err = child.FindDescriptorByName("billing.Config")
+		require.NoError(t, err)
+
+		// Parent-only type resolves through the fallback chain at
+		// every lookup tier on the child.
+		desc, err := child.FindDescriptorByName("shared.Trace")
+		require.NoError(t, err, "FindDescriptorByName must walk to parent")
+		require.Equal(t, protoreflect.FullName("shared.Trace"), desc.FullName())
+
+		mt, err := child.FindMessageByName("shared.Trace")
+		require.NoError(t, err, "FindMessageByName must walk to parent")
+		require.Equal(t, protoreflect.FullName("shared.Trace"), mt.Descriptor().FullName())
+
+		fd, err := child.FindFileByPath("shared.proto")
+		require.NoError(t, err, "FindFileByPath must walk to parent")
+		require.Equal(t, "shared.proto", fd.Path())
+
+		// Per-schema lookup also walks to the parent — schema views
+		// are constructed with the same parent fallback.
+		schemaDesc, err := child.Schema("billing").FindMessageByName("shared.Trace")
+		require.NoError(t, err, "SchemaResolver must walk to parent")
+		require.Equal(t, protoreflect.FullName("shared.Trace"), schemaDesc.Descriptor().FullName())
+
+		// A name absent from both child and parent stays NotFound.
+		_, err = child.FindDescriptorByName("nowhere.Missing")
+		require.ErrorIs(t, err, protoregistry.NotFound)
+	})
+
 	t.Run("SchemaResolver", func(t *testing.T) {
 		const ns = "schemares"
 		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
