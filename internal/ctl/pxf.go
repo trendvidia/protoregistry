@@ -78,7 +78,7 @@ func newPXFEncodeCmd(cli *CLI, defaultNS *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(file)
+			data, err := os.ReadFile(file) // #nosec G304 -- CLI-supplied input file path
 			if err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func newPXFDecodeCmd(cli *CLI, defaultNS *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(file)
+			data, err := os.ReadFile(file) // #nosec G304 -- CLI-supplied input file path
 			if err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func newPXFValidateCmd(cli *CLI, defaultNS *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(file)
+			data, err := os.ReadFile(file) // #nosec G304 -- CLI-supplied input file path
 			if err != nil {
 				return err
 			}
@@ -196,7 +196,7 @@ func newPXFFmtCmd(cli *CLI, defaultNS *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(file)
+			data, err := os.ReadFile(file) // #nosec G304 -- CLI-supplied input file path
 			if err != nil {
 				return err
 			}

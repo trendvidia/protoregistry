@@ -22,7 +22,7 @@ func LoadBuiltIns(dir string) ([]DepSource, error) {
 		if d.IsDir() || !strings.HasSuffix(path, ".proto") {
 			return nil
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) // #nosec G304,G122 -- caller-supplied directory walked by filepath.WalkDir; symlink TOCTOU not in scope for this internal compile path
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", path, err)
 		}

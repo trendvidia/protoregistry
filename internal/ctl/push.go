@@ -118,7 +118,7 @@ func resolveProtoSources(paths []string) (map[string][]byte, error) {
 			if !strings.HasSuffix(p, ".proto") {
 				return nil, fmt.Errorf("%s is not a .proto file", p)
 			}
-			content, err := os.ReadFile(p)
+			content, err := os.ReadFile(p) // #nosec G304 -- CLI-supplied .proto path
 			if err != nil {
 				return nil, fmt.Errorf("reading %s: %w", p, err)
 			}
@@ -134,7 +134,7 @@ func resolveProtoSources(paths []string) (map[string][]byte, error) {
 			if d.IsDir() || !strings.HasSuffix(path, ".proto") {
 				return nil
 			}
-			content, err := os.ReadFile(path)
+			content, err := os.ReadFile(path) // #nosec G304,G122 -- CLI-supplied directory walked via filepath.WalkDir; operator-chosen path
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", path, err)
 			}

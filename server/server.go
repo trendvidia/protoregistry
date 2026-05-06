@@ -577,5 +577,3 @@ func schemaToProto(schema *store.Schema, versions []uint64) *registrypb.SchemaIn
 
 // Compile-time assertion that Server satisfies the generated interface.
 var _ registrypb.RegistryServiceServer = (*Server)(nil)
-
-

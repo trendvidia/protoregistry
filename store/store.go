@@ -156,12 +156,12 @@ type VersionFile struct {
 // VersionDep records that a schema version was compiled against a specific
 // version of another schema's file.
 type VersionDep struct {
-	NamespaceID  string
-	SchemaID     string
-	Version      uint64
-	DepSchemaID  string
-	DepFilename  string
-	DepVersion   uint64
+	NamespaceID string
+	SchemaID    string
+	Version     uint64
+	DepSchemaID string
+	DepFilename string
+	DepVersion  uint64
 }
 
 // PromotedSchema describes a schema that was promoted from staged to current.

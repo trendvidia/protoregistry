@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -73,7 +74,7 @@ func (s *Store) ListNamespaces(ctx context.Context) ([]*store.Namespace, error) 
 func (s *Store) ListNamespacesPage(ctx context.Context, after string, limit int) ([]*store.Namespace, error) {
 	rows, err := s.q.ListNamespacesPage(ctx, sqlc.ListNamespacesPageParams{
 		ID:    after,
-		Limit: int32(limit),
+		Limit: intToInt32Clamp(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing namespaces page: %w", err)
@@ -95,7 +96,7 @@ func (s *Store) PutBlob(ctx context.Context, blob *store.ProtoBlob) error {
 		NamespaceID:    blob.NamespaceID,
 		Sha256:         blob.SHA256,
 		OriginalSource: blob.OriginalSource,
-		SizeBytes:      int32(blob.SizeBytes),
+		SizeBytes:      intToInt32Clamp(blob.SizeBytes),
 	})
 }
 
@@ -151,7 +152,7 @@ func (s *Store) ListSchemasPage(ctx context.Context, namespaceID, after string, 
 	rows, err := s.q.ListSchemasPage(ctx, sqlc.ListSchemasPageParams{
 		NamespaceID: namespaceID,
 		SchemaID:    after,
-		Limit:       int32(limit),
+		Limit:       intToInt32Clamp(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing schemas page for %s: %w", namespaceID, err)
@@ -168,14 +169,14 @@ func (s *Store) PutVersion(ctx context.Context, ver *store.SchemaVersion, files 
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := s.q.WithTx(tx)
 
 	err = qtx.InsertVersion(ctx, sqlc.InsertVersionParams{
 		NamespaceID:     ver.NamespaceID,
 		SchemaID:        ver.SchemaID,
-		Version:         int64(ver.Version),
+		Version:         versionToDB(ver.Version),
 		Compiled:        ver.Compiled,
 		CompilerVersion: ver.CompilerVersion,
 		CreatedBy:       ver.CreatedBy,
@@ -189,7 +190,7 @@ func (s *Store) PutVersion(ctx context.Context, ver *store.SchemaVersion, files 
 		err = qtx.InsertVersionFile(ctx, sqlc.InsertVersionFileParams{
 			NamespaceID: f.NamespaceID,
 			SchemaID:    f.SchemaID,
-			Version:     int64(f.Version),
+			Version:     versionToDB(f.Version),
 			Filename:    f.Filename,
 			BlobSha256:  f.BlobSHA256,
 		})
@@ -202,10 +203,10 @@ func (s *Store) PutVersion(ctx context.Context, ver *store.SchemaVersion, files 
 		err = qtx.InsertVersionDep(ctx, sqlc.InsertVersionDepParams{
 			NamespaceID: d.NamespaceID,
 			SchemaID:    d.SchemaID,
-			Version:     int64(d.Version),
+			Version:     versionToDB(d.Version),
 			DepSchemaID: d.DepSchemaID,
 			DepFilename: d.DepFilename,
-			DepVersion:  int64(d.DepVersion),
+			DepVersion:  versionToDB(d.DepVersion),
 		})
 		if err != nil {
 			return fmt.Errorf("inserting version dep: %w", err)
@@ -219,7 +220,7 @@ func (s *Store) GetVersion(ctx context.Context, namespaceID, schemaID string, ve
 	row, err := s.q.GetVersion(ctx, sqlc.GetVersionParams{
 		NamespaceID: namespaceID,
 		SchemaID:    schemaID,
-		Version:     int64(version),
+		Version:     versionToDB(version),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting version %s/%s@%d: %w", namespaceID, schemaID, version, err)
@@ -227,7 +228,7 @@ func (s *Store) GetVersion(ctx context.Context, namespaceID, schemaID string, ve
 	return &store.SchemaVersion{
 		NamespaceID:     row.NamespaceID,
 		SchemaID:        row.SchemaID,
-		Version:         uint64(row.Version),
+		Version:         versionFromDB(row.Version),
 		Compiled:        row.Compiled,
 		CompilerVersion: row.CompilerVersion,
 		CreatedAt:       row.CreatedAt,
@@ -241,7 +242,7 @@ func (s *Store) GetVersionFiles(ctx context.Context, namespaceID, schemaID strin
 	rows, err := s.q.GetVersionFiles(ctx, sqlc.GetVersionFilesParams{
 		NamespaceID: namespaceID,
 		SchemaID:    schemaID,
-		Version:     int64(version),
+		Version:     versionToDB(version),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting version files: %w", err)
@@ -251,7 +252,7 @@ func (s *Store) GetVersionFiles(ctx context.Context, namespaceID, schemaID strin
 		result[i] = store.VersionFile{
 			NamespaceID: row.NamespaceID,
 			SchemaID:    row.SchemaID,
-			Version:     uint64(row.Version),
+			Version:     versionFromDB(row.Version),
 			Filename:    row.Filename,
 			BlobSHA256:  row.BlobSha256,
 		}
@@ -269,7 +270,7 @@ func (s *Store) ListVersions(ctx context.Context, namespaceID, schemaID string) 
 	}
 	result := make([]uint64, len(rows))
 	for i, v := range rows {
-		result[i] = uint64(v)
+		result[i] = versionFromDB(v)
 	}
 	return result, nil
 }
@@ -293,7 +294,7 @@ func (s *Store) Promote(ctx context.Context, namespaceID string) ([]store.Promot
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := s.q.WithTx(tx)
 
@@ -316,7 +317,7 @@ func (s *Store) Promote(ctx context.Context, namespaceID string) ([]store.Promot
 	for i, row := range rows {
 		result[i] = store.PromotedSchema{
 			SchemaID:       row.SchemaID,
-			CurrentVersion: uint64(row.CurrentVersion.Int64),
+			CurrentVersion: versionFromDB(row.CurrentVersion.Int64),
 		}
 	}
 	return result, nil
@@ -385,7 +386,7 @@ func groupAllCurrentRows(rows []sqlc.LoadAllCurrentRow) []*store.CurrentSchema {
 			cs = &store.CurrentSchema{
 				NamespaceID:     row.NamespaceID,
 				SchemaID:        row.SchemaID,
-				Version:         uint64(row.Version),
+				Version:         versionFromDB(row.Version),
 				Compiled:        row.Compiled,
 				CompilerVersion: row.CompilerVersion,
 			}
@@ -395,7 +396,7 @@ func groupAllCurrentRows(rows []sqlc.LoadAllCurrentRow) []*store.CurrentSchema {
 		cs.Files = append(cs.Files, store.VersionFile{
 			NamespaceID: row.NamespaceID,
 			SchemaID:    row.SchemaID,
-			Version:     uint64(row.Version),
+			Version:     versionFromDB(row.Version),
 			Filename:    row.Filename,
 			BlobSHA256:  row.BlobSha256,
 		})
@@ -415,7 +416,7 @@ func groupNSCurrentRows(rows []sqlc.LoadNamespaceCurrentRow) []*store.CurrentSch
 			cs = &store.CurrentSchema{
 				NamespaceID:     row.NamespaceID,
 				SchemaID:        row.SchemaID,
-				Version:         uint64(row.Version),
+				Version:         versionFromDB(row.Version),
 				Compiled:        row.Compiled,
 				CompilerVersion: row.CompilerVersion,
 			}
@@ -425,7 +426,7 @@ func groupNSCurrentRows(rows []sqlc.LoadNamespaceCurrentRow) []*store.CurrentSch
 		cs.Files = append(cs.Files, store.VersionFile{
 			NamespaceID: row.NamespaceID,
 			SchemaID:    row.SchemaID,
-			Version:     uint64(row.Version),
+			Version:     versionFromDB(row.Version),
 			Filename:    row.Filename,
 			BlobSHA256:  row.BlobSha256,
 		})
@@ -445,7 +446,7 @@ func groupNSProposedRows(rows []sqlc.LoadNamespaceProposedRow) []*store.CurrentS
 			cs = &store.CurrentSchema{
 				NamespaceID:     row.NamespaceID,
 				SchemaID:        row.SchemaID,
-				Version:         uint64(row.Version),
+				Version:         versionFromDB(row.Version),
 				Compiled:        row.Compiled,
 				CompilerVersion: row.CompilerVersion,
 			}
@@ -455,7 +456,7 @@ func groupNSProposedRows(rows []sqlc.LoadNamespaceProposedRow) []*store.CurrentS
 		cs.Files = append(cs.Files, store.VersionFile{
 			NamespaceID: row.NamespaceID,
 			SchemaID:    row.SchemaID,
-			Version:     uint64(row.Version),
+			Version:     versionFromDB(row.Version),
 			Filename:    row.Filename,
 			BlobSHA256:  row.BlobSha256,
 		})
@@ -464,15 +465,56 @@ func groupNSProposedRows(rows []sqlc.LoadNamespaceProposedRow) []*store.CurrentS
 }
 
 func pgint8(v uint64) pgtype.Int8 {
-	return pgtype.Int8{Int64: int64(v), Valid: true}
+	return pgtype.Int8{Int64: versionToDB(v), Valid: true}
 }
 
 func pgint8ToPtr(v pgtype.Int8) *uint64 {
 	if !v.Valid {
 		return nil
 	}
-	u := uint64(v.Int64)
+	u := versionFromDB(v.Int64)
 	return &u
+}
+
+// versionToDB converts a wire-format uint64 schema version to the int64
+// PostgreSQL BIGINT used in the schemas / files / deps tables. Versions
+// are monotonic positive counters bounded well below 2^63 in practice;
+// this helper concentrates the int-width crossing in one place so the
+// gosec G115 suppression has a single, documented home.
+func versionToDB(v uint64) int64 {
+	if v > math.MaxInt64 {
+		// Practically unreachable — versions never approach 2^63.
+		// Clamp instead of overflowing into a negative value, which the
+		// CHECK (version >= 0) constraint would reject anyway.
+		return math.MaxInt64
+	}
+	return int64(v) // #nosec G115 -- bounds-checked above; versions are monotonic positive counters
+}
+
+// versionFromDB converts a non-negative DB int64 version to its uint64
+// wire form. The schema enforces version >= 0; rows arriving with a
+// negative value indicate corruption and we clamp to 0 rather than
+// silently wrapping.
+func versionFromDB(v int64) uint64 {
+	if v < 0 {
+		return 0
+	}
+	return uint64(v) // #nosec G115 -- bounds-checked above
+}
+
+// intToInt32Clamp narrows a Go int (used for paging limits and blob
+// sizes) to int32, clamping out-of-range values to the column's
+// representable range. Negative values clamp to zero; values above
+// math.MaxInt32 clamp to math.MaxInt32. Callers that need exact
+// fidelity should validate at the API boundary.
+func intToInt32Clamp(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < 0 {
+		return 0
+	}
+	return int32(n) // #nosec G115 -- bounds-checked above
 }
 
 func pgtimeToPtr(v pgtype.Timestamptz) *time.Time {

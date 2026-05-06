@@ -60,7 +60,7 @@ func writeCanonical(w io.Writer, file *ast.FileNode) {
 		// semantically meaningful tokens separated by a single space.
 		text := info.RawText()
 		if text != "" {
-			fmt.Fprintf(w, "%s ", text)
+			_, _ = fmt.Fprintf(w, "%s ", text)
 		}
 		tok, ok = seq.Next(tok)
 	}

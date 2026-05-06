@@ -342,7 +342,9 @@ func TestNewFromFiles(t *testing.T) {
 	t.Run("duplicate file returns error", func(t *testing.T) {
 		// Passing the same file descriptor twice should fail on the second
 		// registration.
-		doubled := append(fileDescs, fileDescs...)
+		doubled := make([]protoreflect.FileDescriptor, 0, 2*len(fileDescs))
+		doubled = append(doubled, fileDescs...)
+		doubled = append(doubled, fileDescs...)
 		_, err := NewFromFiles(0, doubled)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "registering file")

@@ -78,18 +78,21 @@ func Example() {
 	ctx := context.Background()
 	r, err := client.Dial(ctx, "registry.internal:50051", "billing")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	desc, err := r.FindDescriptorByName("billing.v1.Config")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	msg, err := pxf.UnmarshalDescriptor(pxfBytes, desc.(protoreflect.MessageDescriptor))
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	_ = msg
 }
@@ -102,14 +105,16 @@ func ExampleResolver_Schema() {
 	ctx := context.Background()
 	r, err := client.Dial(ctx, "registry.internal:50051", "billing")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	configSchema := r.Schema("config")
 	msg, err := configSchema.NewMessage("billing.v1.Config")
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	_ = msg
 }

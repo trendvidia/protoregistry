@@ -109,7 +109,7 @@ func runServe(parentCtx context.Context, cfg serveConfig) error {
 		if err != nil {
 			return fmt.Errorf("opening sql connection for migrations: %w", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		goose.SetBaseFS(migrations.FS)
 		if err := goose.SetDialect("postgres"); err != nil {
@@ -245,7 +245,7 @@ func buildAuthenticator(cfg serveConfig, logger *slog.Logger) (server.Authentica
 	if err != nil {
 		return nil, fmt.Errorf("opening auth tokens file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	tokens, err := server.ParseTokenFile(f)
 	if err != nil {
 		return nil, fmt.Errorf("parsing auth tokens file: %w", err)

@@ -215,7 +215,7 @@ func newSchemaDescriptorCmd(cli *CLI, defaultNS *string) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("marshaling descriptor set: %w", err)
 				}
-				if err := os.WriteFile(outFile, data, 0o644); err != nil {
+				if err := os.WriteFile(outFile, data, 0o600); err != nil {
 					return fmt.Errorf("writing file: %w", err)
 				}
 				fmt.Printf("Wrote v%d descriptor set to %s\n", resp.Version, outFile)

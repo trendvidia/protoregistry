@@ -188,7 +188,7 @@ func TestNamespaceConcurrentSwaps(t *testing.T) {
 	for i := range goroutines {
 		go func(v int) {
 			defer wg.Done()
-			snap := makeTestSnapshot(t, uint64(v+1))
+			snap := makeTestSnapshot(t, uint64(v+1)) // #nosec G115 -- test loop counter, bounded by goroutines
 			ns.SetCurrent("billing", snap)
 			// Concurrent reads should never panic.
 			_ = ns.Current("billing")
@@ -223,8 +223,8 @@ func TestNamespaceHotSwapMonotonicity(t *testing.T) {
 	ns.SetCurrent("billing", makeTestSnapshot(t, 1))
 
 	const (
-		readers     = 16
-		swaps       = 500
+		readers      = 16
+		swaps        = 500
 		readsPerSwap = 64
 	)
 

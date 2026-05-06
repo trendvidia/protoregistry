@@ -64,7 +64,7 @@ func Setup(t *testing.T) *SetupResult {
 	if err != nil {
 		t.Fatalf("opening sql connection: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {

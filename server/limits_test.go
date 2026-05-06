@@ -11,10 +11,10 @@ func TestResolvePageSize(t *testing.T) {
 		req  uint32
 		want int
 	}{
-		"zero uses default":         {0, 100},
-		"under max passes through":  {50, 50},
-		"at max passes through":     {1000, 1000},
-		"over max is clamped":       {5000, 1000},
+		"zero uses default":        {0, 100},
+		"under max passes through": {50, 50},
+		"at max passes through":    {1000, 1000},
+		"over max is clamped":      {5000, 1000},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

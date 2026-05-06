@@ -31,7 +31,7 @@ func newTLSConfig(cert tls.Certificate) *tls.Config {
 }
 
 func loadCAPool(path string) (*x509.CertPool, error) {
-	pem, err := os.ReadFile(path)
+	pem, err := os.ReadFile(path) // #nosec G304 -- CLI-supplied CA bundle path
 	if err != nil {
 		return nil, fmt.Errorf("reading CA file: %w", err)
 	}

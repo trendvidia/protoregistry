@@ -199,7 +199,7 @@ func scanProtos(dir string) ([]protoFile, error) {
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) // #nosec G304,G122 -- CLI-supplied path walked via filepath.WalkDir; operator-chosen directory
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", path, err)
 		}
