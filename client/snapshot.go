@@ -27,11 +27,19 @@ type nsSnapshot struct {
 // schemaSnapshot is the compiled descriptor state for one schema at one
 // version. files and types are derived from the same FileDescriptorSet
 // and never mutate after construction.
+//
+// files and types are the namespace-isolated registry types from the
+// trendvidia/protobuf-go fork (see go.mod). Each schema gets its own
+// pair, so concurrent lookups across schemas in the same Resolver
+// never contend on a shared mutex. The fork's types satisfy the
+// standard [protoreflect.MessageTypeResolver],
+// [protoreflect.ExtensionTypeResolver], and [protodesc.Resolver]
+// interfaces, so the rest of the package treats them generically.
 type schemaSnapshot struct {
 	schemaID string
 	version  uint64
-	files    *protoregistry.Files
-	types    *dynamicpb.Types
+	files    *protoregistry.NamespacedFiles
+	types    *protoregistry.NamespacedTypes
 }
 
 func newSnapshot(sizeHint int) *nsSnapshot {
@@ -164,16 +172,93 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 	if err != nil {
 		return nil, fmt.Errorf("get_descriptor %s/%s@%d: %w", r.ns, schemaID, version, err)
 	}
-	files, err := protodesc.NewFiles(resp.FileDescriptorSet)
+
+	// Compile the wire FileDescriptorSet via protodesc to resolve
+	// cross-file dependencies, then transfer the result into a fresh
+	// pair of NamespacedFiles / NamespacedTypes registries owned by
+	// this schema. The intermediate *protoregistry.Files is dropped
+	// once registration completes.
+	compiled, err := protodesc.NewFiles(resp.FileDescriptorSet)
 	if err != nil {
 		return nil, fmt.Errorf("compiling descriptors for %s/%s@%d: %w", r.ns, schemaID, version, err)
 	}
+
+	files := protoregistry.NewNamespacedFiles(nil)
+	types := protoregistry.NewNamespacedTypes(nil)
+	var rangeErr error
+	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		if err := files.RegisterFile(fd); err != nil {
+			rangeErr = fmt.Errorf("register file %s: %w", fd.Path(), err)
+			return false
+		}
+		if err := registerFileTypes(types, fd); err != nil {
+			rangeErr = fmt.Errorf("register types in %s: %w", fd.Path(), err)
+			return false
+		}
+		return true
+	})
+	if rangeErr != nil {
+		return nil, fmt.Errorf("populating registries for %s/%s@%d: %w", r.ns, schemaID, version, rangeErr)
+	}
+
 	return &schemaSnapshot{
 		schemaID: schemaID,
 		version:  resp.Version,
 		files:    files,
-		types:    dynamicpb.NewTypes(files),
+		types:    types,
 	}, nil
+}
+
+// registerFileTypes walks every named, instantiable descriptor in fd
+// (messages and their nested messages, enums, extensions) and
+// registers a dynamic type for it in types. Services and methods do
+// not have associated runtime types, so they are skipped here — they
+// are still discoverable via the parallel files registry.
+func registerFileTypes(types *protoregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
+	msgs := fd.Messages()
+	for i := 0; i < msgs.Len(); i++ {
+		if err := registerMessageTypes(types, msgs.Get(i)); err != nil {
+			return err
+		}
+	}
+	enums := fd.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		if err := types.RegisterEnum(dynamicpb.NewEnumType(enums.Get(i))); err != nil {
+			return err
+		}
+	}
+	exts := fd.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		if err := types.RegisterExtension(dynamicpb.NewExtensionType(exts.Get(i))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerMessageTypes(types *protoregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
+	if err := types.RegisterMessage(dynamicpb.NewMessageType(msg)); err != nil {
+		return err
+	}
+	nested := msg.Messages()
+	for i := 0; i < nested.Len(); i++ {
+		if err := registerMessageTypes(types, nested.Get(i)); err != nil {
+			return err
+		}
+	}
+	enums := msg.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		if err := types.RegisterEnum(dynamicpb.NewEnumType(enums.Get(i))); err != nil {
+			return err
+		}
+	}
+	exts := msg.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		if err := types.RegisterExtension(dynamicpb.NewExtensionType(exts.Get(i))); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // populate runs the eager initial fetch for a freshly constructed

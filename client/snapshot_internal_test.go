@@ -9,8 +9,9 @@ import (
 
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
-	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // TestBuildNameIndex_Collision verifies the fail-loud guarantee: two
@@ -92,14 +93,31 @@ func buildSchemaSnapshot(t *testing.T, schemaID, fileTextProto string) *schemaSn
 		t.Fatalf("parsing FileDescriptorProto: %v", err)
 	}
 	fds := &descriptorpb.FileDescriptorSet{File: []*descriptorpb.FileDescriptorProto{fdp}}
-	files, err := protodesc.NewFiles(fds)
+	compiled, err := protodesc.NewFiles(fds)
 	if err != nil {
 		t.Fatalf("compiling descriptors: %v", err)
+	}
+	files := protoregistry.NewNamespacedFiles(nil)
+	types := protoregistry.NewNamespacedTypes(nil)
+	var rangeErr error
+	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		if err := files.RegisterFile(fd); err != nil {
+			rangeErr = err
+			return false
+		}
+		if err := registerFileTypes(types, fd); err != nil {
+			rangeErr = err
+			return false
+		}
+		return true
+	})
+	if rangeErr != nil {
+		t.Fatalf("registering descriptors: %v", rangeErr)
 	}
 	return &schemaSnapshot{
 		schemaID: schemaID,
 		version:  1,
 		files:    files,
-		types:    dynamicpb.NewTypes(files),
+		types:    types,
 	}
 }
