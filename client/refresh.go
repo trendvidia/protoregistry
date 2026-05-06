@@ -6,6 +6,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
@@ -19,6 +20,21 @@ import (
 // never block on Refresh; they read the snapshot atomically.
 //
 // On error, the previous snapshot is preserved (stale-while-error).
+//
+// # Incremental aggregate updates
+//
+// Refresh applies the per-schema diff to the namespace-wide aggregate
+// in place — UnregisterFile / UnregisterMessage / UnregisterEnum /
+// UnregisterExtension for schemas that were removed or replaced, then
+// UpdateFile / Update* for schemas that were added or replaced. This
+// avoids the O(N) cost of rebuilding the aggregate when only a small
+// number of schemas changed.
+//
+// During the brief window between the aggregate mutation and the
+// snapshot.Store call, lookups via [Resolver.FindFileByPath] /
+// [Resolver.FindExtensionByNumber] may observe the new state while
+// per-schema views (via [SchemaResolver]) still reflect the old. For
+// schema-consistent reads, route through SchemaResolver or use [Pin].
 func (r *Resolver) Refresh(ctx context.Context) error {
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
@@ -30,7 +46,17 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 
 	cur := r.snapshot.Load()
 	next := newSnapshot(len(infos))
-	changed := false
+
+	// added: new schemaSnapshots that need to be folded into the aggregate.
+	// replaced: pairs (oldSS, newSS) where the schema's version advanced —
+	//           the old fingerprint must be removed before the new one is
+	//           added. Storing the old SS lets removeFromAggregate use its
+	//           captured fingerprint without re-walking descriptors.
+	var added []*schemaSnapshot
+	type replacement struct {
+		old, fresh *schemaSnapshot
+	}
+	var replaced []replacement
 
 	for _, info := range infos {
 		if info.CurrentVersion == nil {
@@ -39,46 +65,93 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 		version := *info.CurrentVersion
 
 		if cur != nil {
-			if existing, ok := cur.schemas[info.SchemaId]; ok && existing.version == version {
-				next.schemas[info.SchemaId] = existing
+			if existing, ok := cur.schemas[info.SchemaId]; ok {
+				if existing.version == version {
+					// Unchanged: reuse the schemaSnapshot pointer; the
+					// aggregate already has its entries from a prior cycle.
+					next.schemas[info.SchemaId] = existing
+					continue
+				}
+				// Version advanced — fetch the new descriptor and queue a
+				// replacement diff entry.
+				fresh, err := r.fetchSchema(ctx, info.SchemaId, version)
+				if err != nil {
+					return fmt.Errorf("refresh fetch %s@%d: %w", info.SchemaId, version, err)
+				}
+				next.schemas[info.SchemaId] = fresh
+				replaced = append(replaced, replacement{old: existing, fresh: fresh})
 				continue
 			}
 		}
 
-		ss, err := r.fetchSchema(ctx, info.SchemaId, version)
+		// Brand new schema (or first refresh cycle).
+		fresh, err := r.fetchSchema(ctx, info.SchemaId, version)
 		if err != nil {
 			return fmt.Errorf("refresh fetch %s@%d: %w", info.SchemaId, version, err)
 		}
-		next.schemas[info.SchemaId] = ss
-		changed = true
+		next.schemas[info.SchemaId] = fresh
+		added = append(added, fresh)
 	}
 
-	// Detect schema removals.
+	// Schemas that were in cur but not in next have been removed
+	// server-side (or are explicitly excluded by WithSchemas + a server
+	// list change). Their aggregate entries need to come out.
+	var removed []*schemaSnapshot
 	if cur != nil {
-		for id := range cur.schemas {
+		for id, ss := range cur.schemas {
 			if _, ok := next.schemas[id]; !ok {
-				changed = true
-				break
+				removed = append(removed, ss)
 			}
 		}
-	} else {
-		changed = len(next.schemas) > 0
 	}
 
-	if !changed && cur != nil {
+	if len(added) == 0 && len(replaced) == 0 && len(removed) == 0 && cur != nil {
+		// Nothing changed; skip the name-index rebuild and snapshot swap.
 		return nil
 	}
 
 	if err := next.buildNameIndex(); err != nil {
 		return err
 	}
-	if err := next.buildAggregates(); err != nil {
-		return err
+
+	// Apply the diff to the namespace-wide aggregate. Order:
+	//   1. Remove entries for replaced and removed schemas first, so
+	//      Update* below cannot collide with stale entries on the same
+	//      file path or extension number.
+	//   2. Apply added and replaced (new versions of) schemas. Sort the
+	//      apply list by schemaID so the last-wins resolution of any
+	//      file-path or extension-number conflict between siblings is
+	//      reproducible across runs.
+	for _, ss := range removed {
+		if err := r.removeFromAggregate(ss); err != nil {
+			return fmt.Errorf("refresh aggregate remove: %w", err)
+		}
 	}
+	for _, rep := range replaced {
+		if err := r.removeFromAggregate(rep.old); err != nil {
+			return fmt.Errorf("refresh aggregate replace (remove old): %w", err)
+		}
+	}
+
+	apply := make([]*schemaSnapshot, 0, len(added)+len(replaced))
+	apply = append(apply, added...)
+	for _, rep := range replaced {
+		apply = append(apply, rep.fresh)
+	}
+	sort.Slice(apply, func(i, j int) bool { return apply[i].schemaID < apply[j].schemaID })
+	for _, ss := range apply {
+		if err := r.applyToAggregate(ss); err != nil {
+			return fmt.Errorf("refresh aggregate apply: %w", err)
+		}
+	}
+
 	r.snapshot.Store(next)
 	r.logger.Debug("snapshot refreshed",
 		"namespace", r.ns,
 		"schemas", len(next.schemas),
+		"added", len(added),
+		"replaced", len(replaced),
+		"removed", len(removed),
 	)
 	return nil
 }

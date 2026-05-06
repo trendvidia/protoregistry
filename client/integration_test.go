@@ -99,6 +99,56 @@ func TestIntegration(t *testing.T) {
 		require.NotNil(t, msg.Descriptor().Fields().ByName("timeout_ms"))
 	})
 
+	t.Run("IncrementalRefresh_AddAndReplace", func(t *testing.T) {
+		// Exercises the diff path in Refresh: one schema is replaced
+		// (version advance) while another is added (brand new) in the
+		// same refresh cycle. The aggregate registries (nsFiles,
+		// nsTypes) must reflect both diffs after a single refresh.
+		const ns = "incremental"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, ns, client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		// Initial state: only billing v1 exists.
+		_, err = r.FindFileByPath("billing.proto")
+		require.NoError(t, err)
+		_, err = r.FindFileByPath("audit.proto")
+		require.ErrorIs(t, err, protoregistry.NotFound)
+
+		// In one server cycle: replace billing with v2 AND add a new
+		// schema "audit". Both visible after a single Refresh.
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV2),
+		})
+		srv.PublishAndPromote(t, ns, "audit", map[string][]byte{
+			"audit.proto": []byte(`syntax = "proto3"; package audit; message Event { string actor = 1; }`),
+		})
+		require.NoError(t, r.Refresh(t.Context()))
+
+		// REPLACE: billing now has timeout_ms.
+		billingMsg, err := r.NewMessage("billing.Config")
+		require.NoError(t, err)
+		require.NotNil(t, billingMsg.Descriptor().Fields().ByName("timeout_ms"),
+			"billing.proto should be at v2 after refresh")
+
+		// ADD: audit is now resolvable across every lookup path.
+		auditDesc, err := r.FindDescriptorByName("audit.Event")
+		require.NoError(t, err)
+		require.Equal(t, protoreflect.FullName("audit.Event"), auditDesc.FullName())
+
+		auditFile, err := r.FindFileByPath("audit.proto")
+		require.NoError(t, err)
+		require.Equal(t, "audit.proto", auditFile.Path())
+
+		// SchemaResolver isolation still holds after the diff.
+		_, err = r.Schema("audit").FindMessageByName("billing.Config")
+		require.ErrorIs(t, err, protoregistry.NotFound)
+	})
+
 	t.Run("Pin_FreezesAtVersion", func(t *testing.T) {
 		const ns = "pin"
 		v1 := srv.PublishAndPromote(t, ns, "billing", map[string][]byte{

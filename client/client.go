@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,8 +45,30 @@ type Resolver struct {
 	cfg      config
 	logger   *slog.Logger
 
-	snapshot  atomic.Pointer[nsSnapshot]
-	refreshMu sync.Mutex // serializes Refresh calls
+	// snapshot is the per-schema view: schemaID → schemaSnapshot, plus
+	// a cross-schema FQN → schemaID name index. Atomically swapped on
+	// refresh; readers always see a coherent set of per-schema views.
+	snapshot atomic.Pointer[nsSnapshot]
+
+	// nsFiles and nsTypes are the namespace-wide aggregates that back
+	// FindFileByPath and FindExtensionByNumber. They live on the
+	// Resolver (not on the snapshot) so refresh can mutate them
+	// incrementally via UpdateFile / UnregisterFile rather than
+	// rebuilding from scratch on every poll. Reads are protected by
+	// the fork's per-instance RWMutex inside each registry; writes are
+	// serialized by refreshMu below.
+	//
+	// One subtle consequence: during a refresh, lookups via
+	// FindFileByPath/FindExtensionByNumber may briefly observe the new
+	// aggregate state while [Resolver.snapshot] still points at the
+	// pre-refresh per-schema view (or vice versa, depending on
+	// ordering). For schema-consistent reads, use [Resolver.Schema]
+	// (which goes through the snapshot only) or [Resolver.Pin] (which
+	// returns a fully-frozen Resolver).
+	nsFiles *protoregistry.NamespacedFiles
+	nsTypes *protoregistry.NamespacedTypes
+
+	refreshMu sync.Mutex // serializes Refresh calls and aggregate mutations
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -82,11 +105,13 @@ func New(ctx context.Context, conn *grpc.ClientConn, namespace string, opts ...O
 	}
 
 	r := &Resolver{
-		conn:   conn,
-		rpc:    registrypb.NewRegistryServiceClient(conn),
-		ns:     namespace,
-		cfg:    cfg,
-		logger: resolveLogger(cfg.logger),
+		conn:    conn,
+		rpc:     registrypb.NewRegistryServiceClient(conn),
+		ns:      namespace,
+		cfg:     cfg,
+		logger:  resolveLogger(cfg.logger),
+		nsFiles: protoregistry.NewNamespacedFiles(nil),
+		nsTypes: protoregistry.NewNamespacedTypes(nil),
 	}
 
 	if err := r.populate(ctx); err != nil {
@@ -185,6 +210,8 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 		ns:       r.ns,
 		cfg:      r.cfg,
 		logger:   r.logger,
+		nsFiles:  protoregistry.NewNamespacedFiles(nil),
+		nsTypes:  protoregistry.NewNamespacedTypes(nil),
 	}
 	pinned.cfg.refresh = 0
 	pinned.cfg.token = r.cfg.token
@@ -200,9 +227,21 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 	if err := snap.buildNameIndex(); err != nil {
 		return nil, err
 	}
-	if err := snap.buildAggregates(); err != nil {
-		return nil, err
+
+	// Pinned Resolvers are independent of the parent's aggregate; they
+	// build their own from scratch and never refresh, so there is no
+	// incremental path here.
+	ids := make([]string, 0, len(snap.schemas))
+	for id := range snap.schemas {
+		ids = append(ids, id)
 	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := pinned.applyToAggregate(snap.schemas[id]); err != nil {
+			return nil, err
+		}
+	}
+
 	pinned.snapshot.Store(snap)
 	return pinned, nil
 }
@@ -253,27 +292,26 @@ func (r *Resolver) FindExtensionByName(name protoreflect.FullName) (protoreflect
 }
 
 // FindExtensionByNumber looks up an extension by the message it extends
-// and its field number. Searches the namespace-wide aggregate built at
-// snapshot construction time.
+// and its field number. Goes through the Resolver's namespace-wide
+// aggregate, which is mutated incrementally on each refresh.
 func (r *Resolver) FindExtensionByNumber(message protoreflect.FullName, field protoreflect.FieldNumber) (protoreflect.ExtensionType, error) {
-	snap := r.snapshot.Load()
-	if snap == nil {
+	if r == nil || r.nsTypes == nil {
 		return nil, protoregistry.NotFound
 	}
-	return snap.nsTypes.FindExtensionByNumber(message, field)
+	return r.nsTypes.FindExtensionByNumber(message, field)
 }
 
 // --- protodesc.Resolver ---
 
 // FindFileByPath looks up a file descriptor by its proto path (e.g.
-// "billing/v1/billing.proto"). Searches the namespace-wide aggregate
-// built at snapshot construction time.
+// "billing/v1/billing.proto"). Goes through the Resolver's
+// namespace-wide aggregate, which is mutated incrementally on each
+// refresh.
 func (r *Resolver) FindFileByPath(path string) (protoreflect.FileDescriptor, error) {
-	snap := r.snapshot.Load()
-	if snap == nil {
+	if r == nil || r.nsFiles == nil {
 		return nil, protoregistry.NotFound
 	}
-	return snap.nsFiles.FindFileByPath(path)
+	return r.nsFiles.FindFileByPath(path)
 }
 
 // FindDescriptorByName looks up any descriptor (message, enum, service,

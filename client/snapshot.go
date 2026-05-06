@@ -18,19 +18,14 @@ import (
 )
 
 // nsSnapshot is the immutable, atomically-swappable view of every
-// schema the Resolver currently tracks for one namespace.
-//
-// nsFiles and nsTypes are namespace-wide aggregates that fold every
-// schema's files/types into a single registry. They back the lookups
-// that walk *across* schemas (FindFileByPath, FindExtensionByNumber)
-// without iterating schemas at request time. The per-schema
-// schemaSnapshot.files / .types remain the source of truth for
-// per-schema lookups via SchemaResolver.
+// schema the Resolver currently tracks for one namespace. The
+// namespace-wide aggregate registries (nsFiles, nsTypes) live on the
+// Resolver itself, not on the snapshot, so refresh can mutate them in
+// place via UpdateFile / UnregisterFile rather than rebuilding from
+// scratch on every poll.
 type nsSnapshot struct {
 	schemas   map[string]*schemaSnapshot
 	nameIndex map[protoreflect.FullName]string // FQN -> schemaID
-	nsFiles   *protoregistry.NamespacedFiles
-	nsTypes   *protoregistry.NamespacedTypes
 }
 
 // schemaSnapshot is the compiled descriptor state for one schema at one
@@ -44,55 +39,90 @@ type nsSnapshot struct {
 // standard [protoreflect.MessageTypeResolver],
 // [protoreflect.ExtensionTypeResolver], and [protodesc.Resolver]
 // interfaces, so the rest of the package treats them generically.
+//
+// aggFingerprint records exactly which entries this schema contributes
+// to the Resolver-level aggregate registries. On refresh, when this
+// schema is replaced (new version) or removed (deleted from the
+// namespace), the fingerprint tells [Resolver.removeFromAggregate]
+// what to call UnregisterFile / UnregisterMessage / UnregisterEnum /
+// UnregisterExtension on. Captured once during fetchSchema so the
+// removal path doesn't have to walk descriptors a second time.
 type schemaSnapshot struct {
-	schemaID string
-	version  uint64
-	files    *protoregistry.NamespacedFiles
-	types    *protoregistry.NamespacedTypes
+	schemaID         string
+	version          uint64
+	files            *protoregistry.NamespacedFiles
+	types            *protoregistry.NamespacedTypes
+	aggFingerprint   aggFingerprint
+}
+
+// aggFingerprint is the set of identifiers a schema contributes to the
+// namespace-wide aggregate registries. Stored on schemaSnapshot at
+// fetch time; consumed by removeFromAggregate at refresh time.
+type aggFingerprint struct {
+	filePaths  []string
+	messages   []protoreflect.FullName
+	enums      []protoreflect.FullName
+	extensions []protoreflect.FullName
 }
 
 func newSnapshot(sizeHint int) *nsSnapshot {
 	return &nsSnapshot{
 		schemas:   make(map[string]*schemaSnapshot, sizeHint),
 		nameIndex: make(map[protoreflect.FullName]string, sizeHint*8),
-		nsFiles:   protoregistry.NewNamespacedFiles(nil),
-		nsTypes:   protoregistry.NewNamespacedTypes(nil),
 	}
 }
 
-// buildAggregates folds every schema's files and types into the
-// namespace-wide nsFiles / nsTypes registries. Conflicts (same file
-// path across schemas, same extension across schemas) are resolved
-// last-wins by Update*; this matches the prior for-loop semantics
-// where the iteration order picked an arbitrary winner. Cross-schema
-// FQN collisions on messages/enums are caught separately by
-// buildNameIndex's fail-loud check, so silent override here is bounded
-// to the file-path / extension-number cases.
-func (s *nsSnapshot) buildAggregates() error {
-	// Iterate schemas in deterministic order so the "winner" of any
-	// conflict is reproducible across runs.
-	ids := make([]string, 0, len(s.schemas))
-	for id := range s.schemas {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+// applyToAggregate folds ss's files and types into the Resolver-level
+// nsFiles / nsTypes. Uses Update* (upsert) so duplicate file paths or
+// extension numbers across schemas resolve last-wins — matches the
+// pre-incremental-refresh semantics. Cross-schema FQN collisions on
+// messages/enums are caught separately by [nsSnapshot.buildNameIndex]'s
+// fail-loud check.
+func (r *Resolver) applyToAggregate(ss *schemaSnapshot) error {
+	var rangeErr error
+	ss.files.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		if err := r.nsFiles.UpdateFile(fd); err != nil {
+			rangeErr = fmt.Errorf("aggregating file %s from schema %s: %w", fd.Path(), ss.schemaID, err)
+			return false
+		}
+		if err := registerFileTypesUpdate(r.nsTypes, fd); err != nil {
+			rangeErr = fmt.Errorf("aggregating types from %s in schema %s: %w", fd.Path(), ss.schemaID, err)
+			return false
+		}
+		return true
+	})
+	return rangeErr
+}
 
-	for _, id := range ids {
-		ss := s.schemas[id]
-		var rangeErr error
-		ss.files.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
-			if err := s.nsFiles.UpdateFile(fd); err != nil {
-				rangeErr = fmt.Errorf("aggregating file %s from schema %s: %w", fd.Path(), id, err)
-				return false
-			}
-			if err := registerFileTypesUpdate(s.nsTypes, fd); err != nil {
-				rangeErr = fmt.Errorf("aggregating types from %s in schema %s: %w", fd.Path(), id, err)
-				return false
-			}
-			return true
-		})
-		if rangeErr != nil {
-			return rangeErr
+// removeFromAggregate undoes a previous applyToAggregate for ss.
+// Uses ss.aggFingerprint (captured during fetchSchema) to call
+// UnregisterFile / UnregisterMessage / UnregisterEnum /
+// UnregisterExtension on exactly the entries this schema contributed —
+// no descriptor walking required.
+//
+// Errors from Unregister* indicate a fingerprint that disagreed with
+// the aggregate's actual state, which would be a programming bug. They
+// are wrapped and returned; the caller decides whether to panic, log,
+// or surface.
+func (r *Resolver) removeFromAggregate(ss *schemaSnapshot) error {
+	for _, path := range ss.aggFingerprint.filePaths {
+		if err := r.nsFiles.UnregisterFile(path); err != nil {
+			return fmt.Errorf("unregister file %s (schema %s): %w", path, ss.schemaID, err)
+		}
+	}
+	for _, name := range ss.aggFingerprint.messages {
+		if err := r.nsTypes.UnregisterMessage(name); err != nil {
+			return fmt.Errorf("unregister message %s (schema %s): %w", name, ss.schemaID, err)
+		}
+	}
+	for _, name := range ss.aggFingerprint.enums {
+		if err := r.nsTypes.UnregisterEnum(name); err != nil {
+			return fmt.Errorf("unregister enum %s (schema %s): %w", name, ss.schemaID, err)
+		}
+	}
+	for _, name := range ss.aggFingerprint.extensions {
+		if err := r.nsTypes.UnregisterExtension(name); err != nil {
+			return fmt.Errorf("unregister extension %s (schema %s): %w", name, ss.schemaID, err)
 		}
 	}
 	return nil
@@ -286,6 +316,7 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 
 	files := protoregistry.NewNamespacedFiles(nil)
 	types := protoregistry.NewNamespacedTypes(nil)
+	var fp aggFingerprint
 	var rangeErr error
 	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
 		if err := files.RegisterFile(fd); err != nil {
@@ -296,6 +327,7 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 			rangeErr = fmt.Errorf("register types in %s: %w", fd.Path(), err)
 			return false
 		}
+		fp.collect(fd)
 		return true
 	})
 	if rangeErr != nil {
@@ -303,11 +335,49 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 	}
 
 	return &schemaSnapshot{
-		schemaID: schemaID,
-		version:  resp.Version,
-		files:    files,
-		types:    types,
+		schemaID:       schemaID,
+		version:        resp.Version,
+		files:          files,
+		types:          types,
+		aggFingerprint: fp,
 	}, nil
+}
+
+// collect walks fd and records every file path and named descriptor in
+// the fingerprint. Mirrors the work registerFileTypes does for the
+// per-schema NamespacedTypes, so a later removeFromAggregate has the
+// exact set of identifiers to unregister from the namespace-wide
+// aggregate.
+func (fp *aggFingerprint) collect(fd protoreflect.FileDescriptor) {
+	fp.filePaths = append(fp.filePaths, fd.Path())
+	msgs := fd.Messages()
+	for i := 0; i < msgs.Len(); i++ {
+		fp.collectMessage(msgs.Get(i))
+	}
+	enums := fd.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		fp.enums = append(fp.enums, enums.Get(i).FullName())
+	}
+	exts := fd.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		fp.extensions = append(fp.extensions, exts.Get(i).FullName())
+	}
+}
+
+func (fp *aggFingerprint) collectMessage(msg protoreflect.MessageDescriptor) {
+	fp.messages = append(fp.messages, msg.FullName())
+	nested := msg.Messages()
+	for i := 0; i < nested.Len(); i++ {
+		fp.collectMessage(nested.Get(i))
+	}
+	enums := msg.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		fp.enums = append(fp.enums, enums.Get(i).FullName())
+	}
+	exts := msg.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		fp.extensions = append(fp.extensions, exts.Get(i).FullName())
+	}
 }
 
 // registerFileTypes walks every named, instantiable descriptor in fd
@@ -364,7 +434,11 @@ func registerMessageTypes(types *protoregistry.NamespacedTypes, msg protoreflect
 
 // populate runs the eager initial fetch for a freshly constructed
 // Resolver: list every schema in the namespace, fetch each at its
-// current version, build the name index, and install the snapshot.
+// current version, build the name index, populate the namespace-wide
+// aggregate, and install the snapshot.
+//
+// Subsequent updates go through [Resolver.Refresh], which mutates the
+// aggregate incrementally rather than rebuilding it from scratch.
 func (r *Resolver) populate(ctx context.Context) error {
 	infos, err := r.listAllSchemas(ctx)
 	if err != nil {
@@ -385,9 +459,21 @@ func (r *Resolver) populate(ctx context.Context) error {
 	if err := snap.buildNameIndex(); err != nil {
 		return err
 	}
-	if err := snap.buildAggregates(); err != nil {
-		return err
+
+	// Apply schemas to the aggregate in deterministic order so the
+	// last-wins resolution of any file-path or extension-number conflict
+	// is reproducible across runs.
+	ids := make([]string, 0, len(snap.schemas))
+	for id := range snap.schemas {
+		ids = append(ids, id)
 	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := r.applyToAggregate(snap.schemas[id]); err != nil {
+			return err
+		}
+	}
+
 	r.snapshot.Store(snap)
 	return nil
 }
