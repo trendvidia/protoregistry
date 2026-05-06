@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      otel:
+        patterns:
+          - "go.opentelemetry.io/*"
+      grpc:
+        patterns:
+          - "google.golang.org/grpc"
+          - "google.golang.org/protobuf"
+      testcontainers:
+        patterns:
+          - "github.com/testcontainers/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions

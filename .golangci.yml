@@ -1,0 +1,40 @@
+# golangci-lint configuration. Tracks the same set of linters CI enforces;
+# run `golangci-lint run` locally before pushing.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck       # unhandled errors
+    - govet          # standard library checks
+    - ineffassign    # ineffectual assignments
+    - staticcheck    # SA*, S*, ST* — bug prone code
+    - unused         # dead code
+    - gocritic       # opinionated style + perf
+    - gosec          # security; subset disabled below for noise
+    - misspell
+
+  settings:
+    gosec:
+      excludes:
+        # G104: errors unhandled — overlaps with errcheck and produces
+        # noise on intentional fire-and-forget paths (deferred Close on
+        # read-only resources, etc.).
+        - G104
+        # G404: weak random — protoregistry has no crypto-rand needs;
+        # math/rand is appropriate where we use it.
+        - G404
+
+  exclusions:
+    # Generated code (sqlc / protoc) is not held to the lint contract;
+    # any nits there are fixed by regenerating.
+    paths:
+      - "store/postgres/sqlc"
+      - "proto/.*\\.pb\\.go"
+      - "proto/.*_grpc\\.pb\\.go"
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/trendvidia/protoregistry/security/policy
+    about: Do not file a public issue. Follow the disclosure process in SECURITY.md.
+  - name: Question or discussion
+    url: https://github.com/trendvidia/protoregistry/discussions
+    about: For open-ended questions, use Discussions instead of an issue.

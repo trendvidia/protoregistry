@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package protoregistry.v1;
+
+option go_package = "github.com/trendvidia/protoregistry/proto/protoregistry/v1;registrypb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/descriptor.proto";
+
+// RegistryService provides a gRPC API for the proto schema registry.
+service RegistryService {
+  // Publish compiles and stages a new schema version within a namespace.
+  rpc Publish(PublishRequest) returns (PublishResponse);
+
+  // Promote atomically moves all staged versions to current in a namespace.
+  rpc Promote(PromoteRequest) returns (PromoteResponse);
+
+  // DiscardStaging clears all staged versions in a namespace.
+  rpc DiscardStaging(DiscardStagingRequest) returns (DiscardStagingResponse);
+
+  // Rollback stages a previous version for promotion.
+  rpc Rollback(RollbackRequest) returns (RollbackResponse);
+
+  // GetSchema returns metadata for a schema.
+  rpc GetSchema(GetSchemaRequest) returns (GetSchemaResponse);
+
+  // ListSchemas lists all schemas in a namespace.
+  rpc ListSchemas(ListSchemasRequest) returns (ListSchemasResponse);
+
+  // GetDescriptor returns the compiled FileDescriptorSet for a schema version.
+  rpc GetDescriptor(GetDescriptorRequest) returns (GetDescriptorResponse);
+
+  // GetSource returns the original source files for a schema version.
+  rpc GetSource(GetSourceRequest) returns (GetSourceResponse);
+
+  // ListNamespaces lists all namespaces.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+
+  // CreateNamespace creates a new namespace.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+}
+
+// --- Publish ---
+
+message PublishRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+  // Source proto files: filename → content.
+  map<string, bytes> sources = 3;
+  string created_by = 4;
+  map<string, string> metadata = 5;
+  // When true, allows publishing files that shadow well-known types
+  // (e.g., google/protobuf/timestamp.proto). Defaults to false.
+  //
+  // The server requires the caller to have admin privileges to set this
+  // flag; non-admin callers will receive PERMISSION_DENIED.
+  bool force = 6;
+}
+
+message PublishResponse {
+  uint64 version = 1;
+  string fingerprint = 2;
+  bool no_change = 3;
+}
+
+// --- Promote ---
+
+message PromoteRequest {
+  string namespace_id = 1;
+}
+
+message PromoteResponse {
+  repeated PromotedSchema promoted = 1;
+}
+
+message PromotedSchema {
+  string schema_id = 1;
+  uint64 current_version = 2;
+}
+
+// --- DiscardStaging ---
+
+message DiscardStagingRequest {
+  string namespace_id = 1;
+}
+
+message DiscardStagingResponse {}
+
+// --- Rollback ---
+
+message RollbackRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+  uint64 version = 3;
+  // When true, the server bypasses the compat check that would otherwise
+  // reject a rollback whose target version is not API-backward-compatible
+  // with the current version. Intended for incident response.
+  //
+  // The server requires the caller to have admin privileges to set this
+  // flag; non-admin callers will receive PERMISSION_DENIED.
+  bool force = 4;
+}
+
+message RollbackResponse {}
+
+// --- GetSchema ---
+
+message GetSchemaRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+}
+
+message GetSchemaResponse {
+  SchemaInfo schema = 1;
+}
+
+message SchemaInfo {
+  string namespace_id = 1;
+  string schema_id = 2;
+  optional uint64 current_version = 3;
+  optional uint64 staged_version = 4;
+  google.protobuf.Timestamp created_at = 5;
+  map<string, string> metadata = 6;
+  repeated uint64 versions = 7;
+}
+
+// --- ListSchemas ---
+
+message ListSchemasRequest {
+  string namespace_id = 1;
+  // Maximum number of schemas to return. 0 means use the server default.
+  // The server may cap this; the cap is reflected in the next_page_token.
+  uint32 page_size = 2;
+  // Opaque token returned by a prior call's next_page_token. Empty for the
+  // first page. Tokens are valid only against the same namespace.
+  string page_token = 3;
+}
+
+message ListSchemasResponse {
+  repeated SchemaInfo schemas = 1;
+  // Token to pass as page_token in the next call to fetch more results.
+  // Empty when there are no more pages.
+  string next_page_token = 2;
+}
+
+// --- GetDescriptor ---
+
+message GetDescriptorRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+  // If 0, returns the current version.
+  uint64 version = 3;
+}
+
+message GetDescriptorResponse {
+  uint64 version = 1;
+  google.protobuf.FileDescriptorSet file_descriptor_set = 2;
+}
+
+// --- GetSource ---
+
+message GetSourceRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+  // If 0, returns the current version.
+  uint64 version = 3;
+}
+
+message GetSourceResponse {
+  uint64 version = 1;
+  // filename → source content.
+  map<string, bytes> sources = 2;
+}
+
+// --- ListNamespaces ---
+
+message ListNamespacesRequest {
+  // Maximum number of namespaces to return. 0 means use the server default.
+  uint32 page_size = 1;
+  // Opaque token returned by a prior call's next_page_token. Empty for the
+  // first page.
+  string page_token = 2;
+}
+
+message ListNamespacesResponse {
+  repeated NamespaceInfo namespaces = 1;
+  // Token to pass as page_token in the next call to fetch more results.
+  // Empty when there are no more pages.
+  string next_page_token = 2;
+}
+
+message NamespaceInfo {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  map<string, string> metadata = 3;
+}
+
+// --- CreateNamespace ---
+
+message CreateNamespaceRequest {
+  string id = 1;
+  map<string, string> metadata = 2;
+}
+
+message CreateNamespaceResponse {}
