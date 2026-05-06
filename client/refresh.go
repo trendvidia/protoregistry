@@ -72,6 +72,9 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 	if err := next.buildNameIndex(); err != nil {
 		return err
 	}
+	if err := next.buildAggregates(); err != nil {
+		return err
+	}
 	r.snapshot.Store(next)
 	r.logger.Debug("snapshot refreshed",
 		"namespace", r.ns,

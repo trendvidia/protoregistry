@@ -19,9 +19,18 @@ import (
 
 // nsSnapshot is the immutable, atomically-swappable view of every
 // schema the Resolver currently tracks for one namespace.
+//
+// nsFiles and nsTypes are namespace-wide aggregates that fold every
+// schema's files/types into a single registry. They back the lookups
+// that walk *across* schemas (FindFileByPath, FindExtensionByNumber)
+// without iterating schemas at request time. The per-schema
+// schemaSnapshot.files / .types remain the source of truth for
+// per-schema lookups via SchemaResolver.
 type nsSnapshot struct {
 	schemas   map[string]*schemaSnapshot
 	nameIndex map[protoreflect.FullName]string // FQN -> schemaID
+	nsFiles   *protoregistry.NamespacedFiles
+	nsTypes   *protoregistry.NamespacedTypes
 }
 
 // schemaSnapshot is the compiled descriptor state for one schema at one
@@ -46,7 +55,99 @@ func newSnapshot(sizeHint int) *nsSnapshot {
 	return &nsSnapshot{
 		schemas:   make(map[string]*schemaSnapshot, sizeHint),
 		nameIndex: make(map[protoreflect.FullName]string, sizeHint*8),
+		nsFiles:   protoregistry.NewNamespacedFiles(nil),
+		nsTypes:   protoregistry.NewNamespacedTypes(nil),
 	}
+}
+
+// buildAggregates folds every schema's files and types into the
+// namespace-wide nsFiles / nsTypes registries. Conflicts (same file
+// path across schemas, same extension across schemas) are resolved
+// last-wins by Update*; this matches the prior for-loop semantics
+// where the iteration order picked an arbitrary winner. Cross-schema
+// FQN collisions on messages/enums are caught separately by
+// buildNameIndex's fail-loud check, so silent override here is bounded
+// to the file-path / extension-number cases.
+func (s *nsSnapshot) buildAggregates() error {
+	// Iterate schemas in deterministic order so the "winner" of any
+	// conflict is reproducible across runs.
+	ids := make([]string, 0, len(s.schemas))
+	for id := range s.schemas {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, id := range ids {
+		ss := s.schemas[id]
+		var rangeErr error
+		ss.files.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+			if err := s.nsFiles.UpdateFile(fd); err != nil {
+				rangeErr = fmt.Errorf("aggregating file %s from schema %s: %w", fd.Path(), id, err)
+				return false
+			}
+			if err := registerFileTypesUpdate(s.nsTypes, fd); err != nil {
+				rangeErr = fmt.Errorf("aggregating types from %s in schema %s: %w", fd.Path(), id, err)
+				return false
+			}
+			return true
+		})
+		if rangeErr != nil {
+			return rangeErr
+		}
+	}
+	return nil
+}
+
+// registerFileTypesUpdate is the Update* counterpart of
+// registerFileTypes. Used when building the namespace-wide aggregate
+// where the same descriptor (e.g. a well-known type) may already be
+// registered by a sibling schema; UpdateMessage / UpdateEnum /
+// UpdateExtension upsert silently rather than erroring on duplicates.
+func registerFileTypesUpdate(types *protoregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
+	msgs := fd.Messages()
+	for i := 0; i < msgs.Len(); i++ {
+		if err := registerMessageTypesUpdate(types, msgs.Get(i)); err != nil {
+			return err
+		}
+	}
+	enums := fd.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		if err := types.UpdateEnum(dynamicpb.NewEnumType(enums.Get(i))); err != nil {
+			return err
+		}
+	}
+	exts := fd.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		if err := types.UpdateExtension(dynamicpb.NewExtensionType(exts.Get(i))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerMessageTypesUpdate(types *protoregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
+	if err := types.UpdateMessage(dynamicpb.NewMessageType(msg)); err != nil {
+		return err
+	}
+	nested := msg.Messages()
+	for i := 0; i < nested.Len(); i++ {
+		if err := registerMessageTypesUpdate(types, nested.Get(i)); err != nil {
+			return err
+		}
+	}
+	enums := msg.Enums()
+	for i := 0; i < enums.Len(); i++ {
+		if err := types.UpdateEnum(dynamicpb.NewEnumType(enums.Get(i))); err != nil {
+			return err
+		}
+	}
+	exts := msg.Extensions()
+	for i := 0; i < exts.Len(); i++ {
+		if err := types.UpdateExtension(dynamicpb.NewExtensionType(exts.Get(i))); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // schemaFor returns the schema that owns the given FQN, if any.
@@ -282,6 +383,9 @@ func (r *Resolver) populate(ctx context.Context) error {
 		snap.schemas[info.SchemaId] = ss
 	}
 	if err := snap.buildNameIndex(); err != nil {
+		return err
+	}
+	if err := snap.buildAggregates(); err != nil {
 		return err
 	}
 	r.snapshot.Store(snap)

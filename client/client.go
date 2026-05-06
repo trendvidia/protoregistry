@@ -200,6 +200,9 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 	if err := snap.buildNameIndex(); err != nil {
 		return nil, err
 	}
+	if err := snap.buildAggregates(); err != nil {
+		return nil, err
+	}
 	pinned.snapshot.Store(snap)
 	return pinned, nil
 }
@@ -250,35 +253,27 @@ func (r *Resolver) FindExtensionByName(name protoreflect.FullName) (protoreflect
 }
 
 // FindExtensionByNumber looks up an extension by the message it extends
-// and its field number. Walks all schemas in the namespace.
+// and its field number. Searches the namespace-wide aggregate built at
+// snapshot construction time.
 func (r *Resolver) FindExtensionByNumber(message protoreflect.FullName, field protoreflect.FieldNumber) (protoreflect.ExtensionType, error) {
 	snap := r.snapshot.Load()
 	if snap == nil {
 		return nil, protoregistry.NotFound
 	}
-	for _, ss := range snap.schemas {
-		if ext, err := ss.types.FindExtensionByNumber(message, field); err == nil {
-			return ext, nil
-		}
-	}
-	return nil, protoregistry.NotFound
+	return snap.nsTypes.FindExtensionByNumber(message, field)
 }
 
 // --- protodesc.Resolver ---
 
 // FindFileByPath looks up a file descriptor by its proto path (e.g.
-// "billing/v1/billing.proto"). Walks all schemas in the namespace.
+// "billing/v1/billing.proto"). Searches the namespace-wide aggregate
+// built at snapshot construction time.
 func (r *Resolver) FindFileByPath(path string) (protoreflect.FileDescriptor, error) {
 	snap := r.snapshot.Load()
 	if snap == nil {
 		return nil, protoregistry.NotFound
 	}
-	for _, ss := range snap.schemas {
-		if fd, err := ss.files.FindFileByPath(path); err == nil {
-			return fd, nil
-		}
-	}
-	return nil, protoregistry.NotFound
+	return snap.nsFiles.FindFileByPath(path)
 }
 
 // FindDescriptorByName looks up any descriptor (message, enum, service,
