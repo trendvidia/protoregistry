@@ -1707,11 +1707,102 @@ func (x *RebaseResponse) GetNoChange() bool {
 	return false
 }
 
+type GetNamespaceChainRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NamespaceId   string                 `protobuf:"bytes,1,opt,name=namespace_id,json=namespaceId,proto3" json:"namespace_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNamespaceChainRequest) Reset() {
+	*x = GetNamespaceChainRequest{}
+	mi := &file_protoregistry_v1_registry_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNamespaceChainRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNamespaceChainRequest) ProtoMessage() {}
+
+func (x *GetNamespaceChainRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_protoregistry_v1_registry_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNamespaceChainRequest.ProtoReflect.Descriptor instead.
+func (*GetNamespaceChainRequest) Descriptor() ([]byte, []int) {
+	return file_protoregistry_v1_registry_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *GetNamespaceChainRequest) GetNamespaceId() string {
+	if x != nil {
+		return x.NamespaceId
+	}
+	return ""
+}
+
+type GetNamespaceChainResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Ordered child → root. The named namespace is at index 0; its parent
+	// (if any) at index 1; etc. The implicit __builtins__ and Google WKT
+	// tiers are not included.
+	NamespaceIds  []string `protobuf:"bytes,1,rep,name=namespace_ids,json=namespaceIds,proto3" json:"namespace_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNamespaceChainResponse) Reset() {
+	*x = GetNamespaceChainResponse{}
+	mi := &file_protoregistry_v1_registry_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNamespaceChainResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNamespaceChainResponse) ProtoMessage() {}
+
+func (x *GetNamespaceChainResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_protoregistry_v1_registry_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNamespaceChainResponse.ProtoReflect.Descriptor instead.
+func (*GetNamespaceChainResponse) Descriptor() ([]byte, []int) {
+	return file_protoregistry_v1_registry_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *GetNamespaceChainResponse) GetNamespaceIds() []string {
+	if x != nil {
+		return x.NamespaceIds
+	}
+	return nil
+}
+
 var File_protoregistry_v1_registry_proto protoreflect.FileDescriptor
 
 const file_protoregistry_v1_registry_proto_rawDesc = "" +
 	"\n" +
-	"\x1fprotoregistry/v1/registry.proto\x12\x10protoregistry.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a google/protobuf/descriptor.proto\"\x93\x03\n" +
+	"\x1fprotoregistry/v1/registry.proto\x12\x10protoregistry.v1\x1a google/protobuf/descriptor.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x93\x03\n" +
 	"\x0ePublishRequest\x12!\n" +
 	"\fnamespace_id\x18\x01 \x01(\tR\vnamespaceId\x12\x1b\n" +
 	"\tschema_id\x18\x02 \x01(\tR\bschemaId\x12G\n" +
@@ -1842,7 +1933,12 @@ const file_protoregistry_v1_registry_proto_rawDesc = "" +
 	"\x0eRebaseResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\x12\x1b\n" +
-	"\tno_change\x18\x03 \x01(\bR\bnoChange2\xc6\t\n" +
+	"\tno_change\x18\x03 \x01(\bR\bnoChange\"=\n" +
+	"\x18GetNamespaceChainRequest\x12!\n" +
+	"\fnamespace_id\x18\x01 \x01(\tR\vnamespaceId\"@\n" +
+	"\x19GetNamespaceChainResponse\x12#\n" +
+	"\rnamespace_ids\x18\x01 \x03(\tR\fnamespaceIds2\xb4\n" +
+	"\n" +
 	"\x0fRegistryService\x12N\n" +
 	"\aPublish\x12 .protoregistry.v1.PublishRequest\x1a!.protoregistry.v1.PublishResponse\x12N\n" +
 	"\aPromote\x12 .protoregistry.v1.PromoteRequest\x1a!.protoregistry.v1.PromoteResponse\x12c\n" +
@@ -1856,7 +1952,8 @@ const file_protoregistry_v1_registry_proto_rawDesc = "" +
 	"\x0fCreateNamespace\x12(.protoregistry.v1.CreateNamespaceRequest\x1a).protoregistry.v1.CreateNamespaceResponse\x12o\n" +
 	"\x12SetNamespaceParent\x12+.protoregistry.v1.SetNamespaceParentRequest\x1a,.protoregistry.v1.SetNamespaceParentResponse\x12f\n" +
 	"\x0fGetRebaseStatus\x12(.protoregistry.v1.GetRebaseStatusRequest\x1a).protoregistry.v1.GetRebaseStatusResponse\x12K\n" +
-	"\x06Rebase\x12\x1f.protoregistry.v1.RebaseRequest\x1a .protoregistry.v1.RebaseResponseBGZEgithub.com/trendvidia/protoregistry/proto/protoregistry/v1;registrypbb\x06proto3"
+	"\x06Rebase\x12\x1f.protoregistry.v1.RebaseRequest\x1a .protoregistry.v1.RebaseResponse\x12l\n" +
+	"\x11GetNamespaceChain\x12*.protoregistry.v1.GetNamespaceChainRequest\x1a+.protoregistry.v1.GetNamespaceChainResponseBGZEgithub.com/trendvidia/protoregistry/proto/protoregistry/v1;registrypbb\x06proto3"
 
 var (
 	file_protoregistry_v1_registry_proto_rawDescOnce sync.Once
@@ -1870,7 +1967,7 @@ func file_protoregistry_v1_registry_proto_rawDescGZIP() []byte {
 	return file_protoregistry_v1_registry_proto_rawDescData
 }
 
-var file_protoregistry_v1_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_protoregistry_v1_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_protoregistry_v1_registry_proto_goTypes = []any{
 	(*PublishRequest)(nil),                 // 0: protoregistry.v1.PublishRequest
 	(*PublishResponse)(nil),                // 1: protoregistry.v1.PublishResponse
@@ -1902,29 +1999,31 @@ var file_protoregistry_v1_registry_proto_goTypes = []any{
 	(*ParentPinStatus)(nil),                // 27: protoregistry.v1.ParentPinStatus
 	(*RebaseRequest)(nil),                  // 28: protoregistry.v1.RebaseRequest
 	(*RebaseResponse)(nil),                 // 29: protoregistry.v1.RebaseResponse
-	nil,                                    // 30: protoregistry.v1.PublishRequest.SourcesEntry
-	nil,                                    // 31: protoregistry.v1.PublishRequest.MetadataEntry
-	nil,                                    // 32: protoregistry.v1.SchemaInfo.MetadataEntry
-	nil,                                    // 33: protoregistry.v1.GetSourceResponse.SourcesEntry
-	nil,                                    // 34: protoregistry.v1.NamespaceInfo.MetadataEntry
-	nil,                                    // 35: protoregistry.v1.CreateNamespaceRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),          // 36: google.protobuf.Timestamp
-	(*descriptorpb.FileDescriptorSet)(nil), // 37: google.protobuf.FileDescriptorSet
+	(*GetNamespaceChainRequest)(nil),       // 30: protoregistry.v1.GetNamespaceChainRequest
+	(*GetNamespaceChainResponse)(nil),      // 31: protoregistry.v1.GetNamespaceChainResponse
+	nil,                                    // 32: protoregistry.v1.PublishRequest.SourcesEntry
+	nil,                                    // 33: protoregistry.v1.PublishRequest.MetadataEntry
+	nil,                                    // 34: protoregistry.v1.SchemaInfo.MetadataEntry
+	nil,                                    // 35: protoregistry.v1.GetSourceResponse.SourcesEntry
+	nil,                                    // 36: protoregistry.v1.NamespaceInfo.MetadataEntry
+	nil,                                    // 37: protoregistry.v1.CreateNamespaceRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),          // 38: google.protobuf.Timestamp
+	(*descriptorpb.FileDescriptorSet)(nil), // 39: google.protobuf.FileDescriptorSet
 }
 var file_protoregistry_v1_registry_proto_depIdxs = []int32{
-	30, // 0: protoregistry.v1.PublishRequest.sources:type_name -> protoregistry.v1.PublishRequest.SourcesEntry
-	31, // 1: protoregistry.v1.PublishRequest.metadata:type_name -> protoregistry.v1.PublishRequest.MetadataEntry
+	32, // 0: protoregistry.v1.PublishRequest.sources:type_name -> protoregistry.v1.PublishRequest.SourcesEntry
+	33, // 1: protoregistry.v1.PublishRequest.metadata:type_name -> protoregistry.v1.PublishRequest.MetadataEntry
 	4,  // 2: protoregistry.v1.PromoteResponse.promoted:type_name -> protoregistry.v1.PromotedSchema
 	11, // 3: protoregistry.v1.GetSchemaResponse.schema:type_name -> protoregistry.v1.SchemaInfo
-	36, // 4: protoregistry.v1.SchemaInfo.created_at:type_name -> google.protobuf.Timestamp
-	32, // 5: protoregistry.v1.SchemaInfo.metadata:type_name -> protoregistry.v1.SchemaInfo.MetadataEntry
+	38, // 4: protoregistry.v1.SchemaInfo.created_at:type_name -> google.protobuf.Timestamp
+	34, // 5: protoregistry.v1.SchemaInfo.metadata:type_name -> protoregistry.v1.SchemaInfo.MetadataEntry
 	11, // 6: protoregistry.v1.ListSchemasResponse.schemas:type_name -> protoregistry.v1.SchemaInfo
-	37, // 7: protoregistry.v1.GetDescriptorResponse.file_descriptor_set:type_name -> google.protobuf.FileDescriptorSet
-	33, // 8: protoregistry.v1.GetSourceResponse.sources:type_name -> protoregistry.v1.GetSourceResponse.SourcesEntry
+	39, // 7: protoregistry.v1.GetDescriptorResponse.file_descriptor_set:type_name -> google.protobuf.FileDescriptorSet
+	35, // 8: protoregistry.v1.GetSourceResponse.sources:type_name -> protoregistry.v1.GetSourceResponse.SourcesEntry
 	20, // 9: protoregistry.v1.ListNamespacesResponse.namespaces:type_name -> protoregistry.v1.NamespaceInfo
-	36, // 10: protoregistry.v1.NamespaceInfo.created_at:type_name -> google.protobuf.Timestamp
-	34, // 11: protoregistry.v1.NamespaceInfo.metadata:type_name -> protoregistry.v1.NamespaceInfo.MetadataEntry
-	35, // 12: protoregistry.v1.CreateNamespaceRequest.metadata:type_name -> protoregistry.v1.CreateNamespaceRequest.MetadataEntry
+	38, // 10: protoregistry.v1.NamespaceInfo.created_at:type_name -> google.protobuf.Timestamp
+	36, // 11: protoregistry.v1.NamespaceInfo.metadata:type_name -> protoregistry.v1.NamespaceInfo.MetadataEntry
+	37, // 12: protoregistry.v1.CreateNamespaceRequest.metadata:type_name -> protoregistry.v1.CreateNamespaceRequest.MetadataEntry
 	27, // 13: protoregistry.v1.GetRebaseStatusResponse.pin_statuses:type_name -> protoregistry.v1.ParentPinStatus
 	0,  // 14: protoregistry.v1.RegistryService.Publish:input_type -> protoregistry.v1.PublishRequest
 	2,  // 15: protoregistry.v1.RegistryService.Promote:input_type -> protoregistry.v1.PromoteRequest
@@ -1939,21 +2038,23 @@ var file_protoregistry_v1_registry_proto_depIdxs = []int32{
 	23, // 24: protoregistry.v1.RegistryService.SetNamespaceParent:input_type -> protoregistry.v1.SetNamespaceParentRequest
 	25, // 25: protoregistry.v1.RegistryService.GetRebaseStatus:input_type -> protoregistry.v1.GetRebaseStatusRequest
 	28, // 26: protoregistry.v1.RegistryService.Rebase:input_type -> protoregistry.v1.RebaseRequest
-	1,  // 27: protoregistry.v1.RegistryService.Publish:output_type -> protoregistry.v1.PublishResponse
-	3,  // 28: protoregistry.v1.RegistryService.Promote:output_type -> protoregistry.v1.PromoteResponse
-	6,  // 29: protoregistry.v1.RegistryService.DiscardStaging:output_type -> protoregistry.v1.DiscardStagingResponse
-	8,  // 30: protoregistry.v1.RegistryService.Rollback:output_type -> protoregistry.v1.RollbackResponse
-	10, // 31: protoregistry.v1.RegistryService.GetSchema:output_type -> protoregistry.v1.GetSchemaResponse
-	13, // 32: protoregistry.v1.RegistryService.ListSchemas:output_type -> protoregistry.v1.ListSchemasResponse
-	15, // 33: protoregistry.v1.RegistryService.GetDescriptor:output_type -> protoregistry.v1.GetDescriptorResponse
-	17, // 34: protoregistry.v1.RegistryService.GetSource:output_type -> protoregistry.v1.GetSourceResponse
-	19, // 35: protoregistry.v1.RegistryService.ListNamespaces:output_type -> protoregistry.v1.ListNamespacesResponse
-	22, // 36: protoregistry.v1.RegistryService.CreateNamespace:output_type -> protoregistry.v1.CreateNamespaceResponse
-	24, // 37: protoregistry.v1.RegistryService.SetNamespaceParent:output_type -> protoregistry.v1.SetNamespaceParentResponse
-	26, // 38: protoregistry.v1.RegistryService.GetRebaseStatus:output_type -> protoregistry.v1.GetRebaseStatusResponse
-	29, // 39: protoregistry.v1.RegistryService.Rebase:output_type -> protoregistry.v1.RebaseResponse
-	27, // [27:40] is the sub-list for method output_type
-	14, // [14:27] is the sub-list for method input_type
+	30, // 27: protoregistry.v1.RegistryService.GetNamespaceChain:input_type -> protoregistry.v1.GetNamespaceChainRequest
+	1,  // 28: protoregistry.v1.RegistryService.Publish:output_type -> protoregistry.v1.PublishResponse
+	3,  // 29: protoregistry.v1.RegistryService.Promote:output_type -> protoregistry.v1.PromoteResponse
+	6,  // 30: protoregistry.v1.RegistryService.DiscardStaging:output_type -> protoregistry.v1.DiscardStagingResponse
+	8,  // 31: protoregistry.v1.RegistryService.Rollback:output_type -> protoregistry.v1.RollbackResponse
+	10, // 32: protoregistry.v1.RegistryService.GetSchema:output_type -> protoregistry.v1.GetSchemaResponse
+	13, // 33: protoregistry.v1.RegistryService.ListSchemas:output_type -> protoregistry.v1.ListSchemasResponse
+	15, // 34: protoregistry.v1.RegistryService.GetDescriptor:output_type -> protoregistry.v1.GetDescriptorResponse
+	17, // 35: protoregistry.v1.RegistryService.GetSource:output_type -> protoregistry.v1.GetSourceResponse
+	19, // 36: protoregistry.v1.RegistryService.ListNamespaces:output_type -> protoregistry.v1.ListNamespacesResponse
+	22, // 37: protoregistry.v1.RegistryService.CreateNamespace:output_type -> protoregistry.v1.CreateNamespaceResponse
+	24, // 38: protoregistry.v1.RegistryService.SetNamespaceParent:output_type -> protoregistry.v1.SetNamespaceParentResponse
+	26, // 39: protoregistry.v1.RegistryService.GetRebaseStatus:output_type -> protoregistry.v1.GetRebaseStatusResponse
+	29, // 40: protoregistry.v1.RegistryService.Rebase:output_type -> protoregistry.v1.RebaseResponse
+	31, // 41: protoregistry.v1.RegistryService.GetNamespaceChain:output_type -> protoregistry.v1.GetNamespaceChainResponse
+	28, // [28:42] is the sub-list for method output_type
+	14, // [14:28] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name
@@ -1974,7 +2075,7 @@ func file_protoregistry_v1_registry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protoregistry_v1_registry_proto_rawDesc), len(file_protoregistry_v1_registry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   36,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

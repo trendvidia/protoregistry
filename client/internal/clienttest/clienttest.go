@@ -115,3 +115,14 @@ func (s *Server) PublishAndPromote(t *testing.T, namespace, schemaID string, sou
 	s.Promote(t, namespace)
 	return v
 }
+
+// SetNamespaceParent links a namespace to a parent for chained
+// resolution. Both namespaces must already exist.
+func (s *Server) SetNamespaceParent(t *testing.T, namespace, parent string) {
+	t.Helper()
+	_, err := s.rpc.SetNamespaceParent(context.Background(), &registrypb.SetNamespaceParentRequest{
+		NamespaceId:       namespace,
+		ParentNamespaceId: &parent,
+	})
+	require.NoErrorf(t, err, "SetNamespaceParent %s → %s", namespace, parent)
+}

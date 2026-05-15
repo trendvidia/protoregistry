@@ -557,6 +557,22 @@ func (s *Server) SetNamespaceParent(ctx context.Context, req *registrypb.SetName
 	return &registrypb.SetNamespaceParentResponse{}, nil
 }
 
+// GetNamespaceChain returns the resolution chain for a namespace as an
+// ordered slice of namespace IDs, child-first. Read-only; not gated by
+// writer/admin checks.
+func (s *Server) GetNamespaceChain(ctx context.Context, req *registrypb.GetNamespaceChainRequest) (*registrypb.GetNamespaceChainResponse, error) {
+	if err := validateID(req.NamespaceId, "namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	ids, err := s.registry.GetNamespaceChain(ctx, req.NamespaceId)
+	if err != nil {
+		// Namespace-not-found is the only documented error from the
+		// registry layer here; surface as NotFound rather than Internal.
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &registrypb.GetNamespaceChainResponse{NamespaceIds: ids}, nil
+}
+
 // GetRebaseStatus reports for a schema's current version which pinned
 // cross-namespace dependencies are behind the parent's current state.
 // Read-only — not gated by writer/admin checks.
