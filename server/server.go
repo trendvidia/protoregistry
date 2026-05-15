@@ -15,6 +15,7 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	protoregistry "github.com/trendvidia/protoregistry"
+	"github.com/trendvidia/protoregistry/authz"
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
 	"github.com/trendvidia/protoregistry/store"
 )
@@ -498,15 +500,136 @@ func (s *Server) CreateNamespace(ctx context.Context, req *registrypb.CreateName
 	} else if err := validateID(req.Id, "id", s.opts.Limits.MaxIDLength); err != nil {
 		return nil, err
 	}
+	// Validate parent (if specified) and forbid pointing at the builtins
+	// namespace as a parent — that's the implicit root for everyone and
+	// shouldn't be addressable via the parent column.
+	var parentID *string
+	if req.ParentNamespaceId != nil {
+		if *req.ParentNamespaceId == protoregistry.BuiltinsNamespace {
+			return nil, status.Error(codes.InvalidArgument, "parent_namespace_id cannot be __builtins__; it is the implicit root")
+		}
+		if err := validateID(*req.ParentNamespaceId, "parent_namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+			return nil, err
+		}
+		parentID = req.ParentNamespaceId
+	}
 
-	if err := s.store.CreateNamespace(ctx, &store.Namespace{
-		ID:       req.Id,
-		Metadata: req.Metadata,
+	if err := s.registry.CreateNamespace(ctx, &protoregistry.CreateNamespaceRequest{
+		NamespaceID: req.Id,
+		ParentID:    parentID,
+		Metadata:    req.Metadata,
+		ActorID:     id.Subject,
 	}); err != nil {
-		return nil, s.internalError(ctx, "create_namespace", err)
+		return nil, s.translateHierarchyError(ctx, "create_namespace", err)
 	}
 	s.audit(ctx, "create_namespace", "namespace", req.Id)
 	return &registrypb.CreateNamespaceResponse{}, nil
+}
+
+// SetNamespaceParent re-parents an existing namespace. Audit row is
+// written transactionally with the parent change (decision D9).
+func (s *Server) SetNamespaceParent(ctx context.Context, req *registrypb.SetNamespaceParentRequest) (*registrypb.SetNamespaceParentResponse, error) {
+	id := IdentityFromContext(ctx)
+	if err := s.requireWriter(id); err != nil {
+		return nil, err
+	}
+	if err := validateID(req.NamespaceId, "namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	var parentID *string
+	if req.ParentNamespaceId != nil {
+		if *req.ParentNamespaceId == protoregistry.BuiltinsNamespace {
+			return nil, status.Error(codes.InvalidArgument, "parent_namespace_id cannot be __builtins__; it is the implicit root")
+		}
+		if err := validateID(*req.ParentNamespaceId, "parent_namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+			return nil, err
+		}
+		parentID = req.ParentNamespaceId
+	}
+	if err := s.registry.SetNamespaceParent(ctx, &protoregistry.SetNamespaceParentRequest{
+		NamespaceID: req.NamespaceId,
+		ParentID:    parentID,
+		ActorID:     id.Subject,
+	}); err != nil {
+		return nil, s.translateHierarchyError(ctx, "set_namespace_parent", err)
+	}
+	s.audit(ctx, "set_namespace_parent", "namespace", req.NamespaceId)
+	return &registrypb.SetNamespaceParentResponse{}, nil
+}
+
+// GetRebaseStatus reports for a schema's current version which pinned
+// cross-namespace dependencies are behind the parent's current state.
+// Read-only — not gated by writer/admin checks.
+func (s *Server) GetRebaseStatus(ctx context.Context, req *registrypb.GetRebaseStatusRequest) (*registrypb.GetRebaseStatusResponse, error) {
+	if err := validateID(req.NamespaceId, "namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	if err := validateID(req.SchemaId, "schema_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	status, err := s.registry.GetRebaseStatus(ctx, req.NamespaceId, req.SchemaId)
+	if err != nil {
+		return nil, s.internalError(ctx, "get_rebase_status", err)
+	}
+	resp := &registrypb.GetRebaseStatusResponse{
+		RebaseAvailable: status.RebaseAvailable,
+		PinStatuses:     make([]*registrypb.ParentPinStatus, 0, len(status.PinStatuses)),
+	}
+	for _, ps := range status.PinStatuses {
+		resp.PinStatuses = append(resp.PinStatuses, &registrypb.ParentPinStatus{
+			ParentNamespaceId: ps.ParentNamespaceID,
+			DepSchemaId:       ps.DepSchemaID,
+			DepFilename:       ps.DepFilename,
+			PinnedVersion:     ps.PinnedVersion,
+			CurrentVersion:    ps.CurrentVersion,
+		})
+	}
+	return resp, nil
+}
+
+// Rebase re-resolves a schema's parent-chain dependencies against the
+// parent's current state and publishes a new version. Sources are
+// unchanged; pins are refreshed. Writer-only.
+func (s *Server) Rebase(ctx context.Context, req *registrypb.RebaseRequest) (*registrypb.RebaseResponse, error) {
+	id := IdentityFromContext(ctx)
+	if err := s.requireWriter(id); err != nil {
+		return nil, err
+	}
+	if err := validateID(req.NamespaceId, "namespace_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	if err := validateID(req.SchemaId, "schema_id", s.opts.Limits.MaxIDLength); err != nil {
+		return nil, err
+	}
+	result, err := s.registry.Rebase(ctx, &protoregistry.RebaseRequest{
+		NamespaceID: req.NamespaceId,
+		SchemaID:    req.SchemaId,
+		ActorID:     id.Subject,
+	})
+	if err != nil {
+		return nil, s.translateHierarchyError(ctx, "rebase", err)
+	}
+	s.audit(ctx, "rebase", "schema", req.NamespaceId+"/"+req.SchemaId)
+	return &registrypb.RebaseResponse{
+		Version:     result.Version,
+		Fingerprint: result.Fingerprint,
+		NoChange:    result.NoChange,
+	}, nil
+}
+
+// translateHierarchyError converts store-layer sentinel errors into the
+// appropriate gRPC status codes, falling back to internalError for
+// anything unrecognized.
+func (s *Server) translateHierarchyError(ctx context.Context, op string, err error) error {
+	switch {
+	case errors.Is(err, store.ErrParentCycle):
+		return status.Error(codes.FailedPrecondition, "setting parent would create a cycle")
+	case errors.Is(err, store.ErrNamespaceNotFound):
+		return status.Error(codes.NotFound, "namespace or parent not found")
+	case errors.Is(err, authz.ErrPermissionDenied):
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	return s.internalError(ctx, op, err)
 }
 
 // --- helpers ---

@@ -12,7 +12,19 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+// Hierarchy-related sentinel errors. See docs/design/namespace-hierarchy.md.
+var (
+	// ErrParentCycle is returned when SetNamespaceParent would create a
+	// cycle in the namespace hierarchy (including self-reference).
+	ErrParentCycle = errors.New("setting parent would create a cycle")
+
+	// ErrNamespaceNotFound is returned when an operation references a
+	// namespace that does not exist.
+	ErrNamespaceNotFound = errors.New("namespace not found")
 )
 
 // Store is the persistence interface for the schema registry.
@@ -44,6 +56,31 @@ type Store interface {
 	// beginning. Keyset pagination — stable under concurrent writes.
 	ListNamespacesPage(ctx context.Context, after string, limit int) ([]*Namespace, error)
 
+	// SetNamespaceParent atomically sets a namespace's parent with cycle
+	// prevention and writes a re-parenting audit row in the same
+	// transaction (decision D9). Passing nil for parentID clears the
+	// parent (resets to the implicit root).
+	//
+	// Returns ErrParentCycle if setting the parent would create a cycle
+	// (including self-reference) and ErrNamespaceNotFound if either the
+	// namespace or the new parent is missing.
+	//
+	// actorID identifies the principal performing the change and is
+	// recorded in namespace_parent_events. Tests and admin scripts that
+	// don't have a real principal may pass a sentinel like "system".
+	SetNamespaceParent(ctx context.Context, namespaceID string, parentID *string, actorID string) error
+
+	// RecordNamespaceParentEvent appends a free-form entry to the audit log.
+	// SetNamespaceParent already records its own event atomically; this
+	// method is exposed for tooling that needs to record events outside the
+	// normal flow (migrations, repairs).
+	RecordNamespaceParentEvent(ctx context.Context, ev *NamespaceParentEvent) error
+
+	// ListNamespaceParentEvents returns the re-parenting history for a
+	// namespace, newest first, bounded by limit. For paginated reads use
+	// ListNamespaceParentEventsPage.
+	ListNamespaceParentEvents(ctx context.Context, namespaceID string, limit int) ([]*NamespaceParentEvent, error)
+
 	// Schema operations.
 
 	// CreateSchema creates a new schema within a namespace.
@@ -72,6 +109,12 @@ type Store interface {
 
 	// GetVersionFiles retrieves the file mappings for a schema version.
 	GetVersionFiles(ctx context.Context, namespaceID, schemaID string, version uint64) ([]VersionFile, error)
+
+	// GetVersionDeps retrieves the dependency records for a schema version
+	// (the per-import pins for both same-namespace and cross-namespace
+	// dependencies — see decision D3). Used by Rebase to compute "what
+	// changed in the parent since this child was published."
+	GetVersionDeps(ctx context.Context, namespaceID, schemaID string, version uint64) ([]VersionDep, error)
 
 	// ListVersions lists all versions of a schema.
 	ListVersions(ctx context.Context, namespaceID, schemaID string) ([]uint64, error)
@@ -118,6 +161,23 @@ type Namespace struct {
 	CreatedAt time.Time
 	DeletedAt *time.Time
 	Metadata  map[string]string
+
+	// ParentNamespaceID is the parent in the resolution chain, or nil for
+	// the implicit root (which falls back to __builtins__ and then to
+	// Google WKT). Wired into resolution by phase 2 of the hierarchy work.
+	ParentNamespaceID *string
+}
+
+// NamespaceParentEvent is an entry in the re-parenting audit log.
+// Append-only; rows are never updated or deleted. See decision D9 in
+// docs/design/namespace-hierarchy.md.
+type NamespaceParentEvent struct {
+	ID               int64
+	NamespaceID      string
+	PreviousParentID *string
+	NewParentID      *string
+	ActorID          string
+	OccurredAt       time.Time
 }
 
 // Schema is a named collection of proto files within a namespace.
@@ -154,14 +214,18 @@ type VersionFile struct {
 }
 
 // VersionDep records that a schema version was compiled against a specific
-// version of another schema's file.
+// version of another schema's file. DepNamespaceID identifies which
+// namespace contributed the file — equal to NamespaceID for same-namespace
+// deps (the only case before the namespace-hierarchy work) and set to an
+// ancestor namespace ID for cross-namespace deps resolved via the chain.
 type VersionDep struct {
-	NamespaceID string
-	SchemaID    string
-	Version     uint64
-	DepSchemaID string
-	DepFilename string
-	DepVersion  uint64
+	NamespaceID    string
+	SchemaID       string
+	Version        uint64
+	DepNamespaceID string
+	DepSchemaID    string
+	DepFilename    string
+	DepVersion     uint64
 }
 
 // PromotedSchema describes a schema that was promoted from staged to current.

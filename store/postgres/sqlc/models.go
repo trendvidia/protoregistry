@@ -11,10 +11,20 @@ import (
 )
 
 type Namespace struct {
-	ID        string             `json:"id"`
-	CreatedAt time.Time          `json:"created_at"`
-	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
-	Metadata  []byte             `json:"metadata"`
+	ID                string             `json:"id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Metadata          []byte             `json:"metadata"`
+	ParentNamespaceID pgtype.Text        `json:"parent_namespace_id"`
+}
+
+type NamespaceParentEvent struct {
+	ID               int64       `json:"id"`
+	NamespaceID      string      `json:"namespace_id"`
+	PreviousParentID pgtype.Text `json:"previous_parent_id"`
+	NewParentID      pgtype.Text `json:"new_parent_id"`
+	ActorID          string      `json:"actor_id"`
+	OccurredAt       time.Time   `json:"occurred_at"`
 }
 
 type ProtoBlob struct {
@@ -48,12 +58,13 @@ type SchemaVersion struct {
 }
 
 type SchemaVersionDep struct {
-	NamespaceID string `json:"namespace_id"`
-	SchemaID    string `json:"schema_id"`
-	Version     int64  `json:"version"`
-	DepSchemaID string `json:"dep_schema_id"`
-	DepFilename string `json:"dep_filename"`
-	DepVersion  int64  `json:"dep_version"`
+	NamespaceID    string `json:"namespace_id"`
+	SchemaID       string `json:"schema_id"`
+	Version        int64  `json:"version"`
+	DepSchemaID    string `json:"dep_schema_id"`
+	DepFilename    string `json:"dep_filename"`
+	DepVersion     int64  `json:"dep_version"`
+	DepNamespaceID string `json:"dep_namespace_id"`
 }
 
 type SchemaVersionFile struct {

@@ -122,7 +122,13 @@ func TestVersionPutAndGet(t *testing.T) {
 		{NamespaceID: "acme", SchemaID: "billing", Version: 1, Filename: "billing/config.proto", BlobSHA256: "hash1"},
 	}
 	deps := []store.VersionDep{
-		{NamespaceID: "acme", SchemaID: "billing", Version: 1, DepSchemaID: "common", DepFilename: "common/types.proto", DepVersion: 3},
+		{
+			NamespaceID: "acme", SchemaID: "billing", Version: 1,
+			DepNamespaceID: "acme", // same-namespace dep — required after the hierarchy migration
+			DepSchemaID:    "common",
+			DepFilename:    "common/types.proto",
+			DepVersion:     3,
+		},
 	}
 	require.NoError(t, s.PutVersion(ctx, ver, files, deps))
 

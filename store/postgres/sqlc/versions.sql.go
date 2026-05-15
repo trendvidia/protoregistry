@@ -9,10 +9,64 @@ import (
 	"context"
 )
 
+const getCrossNamespaceDependents = `-- name: GetCrossNamespaceDependents :many
+SELECT DISTINCT namespace_id, schema_id, version
+FROM schema_version_deps
+WHERE dep_namespace_id = $1
+  AND dep_schema_id = $2
+  AND dep_filename = $3
+  AND dep_version = $4
+`
+
+type GetCrossNamespaceDependentsParams struct {
+	DepNamespaceID string `json:"dep_namespace_id"`
+	DepSchemaID    string `json:"dep_schema_id"`
+	DepFilename    string `json:"dep_filename"`
+	DepVersion     int64  `json:"dep_version"`
+}
+
+type GetCrossNamespaceDependentsRow struct {
+	NamespaceID string `json:"namespace_id"`
+	SchemaID    string `json:"schema_id"`
+	Version     int64  `json:"version"`
+}
+
+// GetCrossNamespaceDependents returns children that pin a specific
+// (parent_namespace, parent_schema, parent_filename, parent_version) —
+// "who depends on this parent file?". Used by phase 2b's Restore to
+// rebuild compiled state and by phase 4's Rebase to find rebase-eligible
+// children when a parent promotes.
+func (q *Queries) GetCrossNamespaceDependents(ctx context.Context, arg GetCrossNamespaceDependentsParams) ([]GetCrossNamespaceDependentsRow, error) {
+	rows, err := q.db.Query(ctx, getCrossNamespaceDependents,
+		arg.DepNamespaceID,
+		arg.DepSchemaID,
+		arg.DepFilename,
+		arg.DepVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetCrossNamespaceDependentsRow{}
+	for rows.Next() {
+		var i GetCrossNamespaceDependentsRow
+		if err := rows.Scan(&i.NamespaceID, &i.SchemaID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDependents = `-- name: GetDependents :many
 SELECT DISTINCT schema_id, version
 FROM schema_version_deps
-WHERE namespace_id = $1 AND dep_schema_id = $2
+WHERE namespace_id = $1
+  AND dep_namespace_id = $1
+  AND dep_schema_id = $2
 `
 
 type GetDependentsParams struct {
@@ -25,6 +79,8 @@ type GetDependentsRow struct {
 	Version  int64  `json:"version"`
 }
 
+// GetDependents returns same-namespace dependents of a schema. Cross-
+// namespace dependents are returned by GetCrossNamespaceDependents.
 func (q *Queries) GetDependents(ctx context.Context, arg GetDependentsParams) ([]GetDependentsRow, error) {
 	rows, err := q.db.Query(ctx, getDependents, arg.NamespaceID, arg.DepSchemaID)
 	if err != nil {
@@ -76,7 +132,8 @@ func (q *Queries) GetVersion(ctx context.Context, arg GetVersionParams) (SchemaV
 }
 
 const getVersionDeps = `-- name: GetVersionDeps :many
-SELECT namespace_id, schema_id, version, dep_schema_id, dep_filename, dep_version
+SELECT namespace_id, schema_id, version,
+       dep_namespace_id, dep_schema_id, dep_filename, dep_version
 FROM schema_version_deps
 WHERE namespace_id = $1 AND schema_id = $2 AND version = $3
 `
@@ -87,19 +144,30 @@ type GetVersionDepsParams struct {
 	Version     int64  `json:"version"`
 }
 
-func (q *Queries) GetVersionDeps(ctx context.Context, arg GetVersionDepsParams) ([]SchemaVersionDep, error) {
+type GetVersionDepsRow struct {
+	NamespaceID    string `json:"namespace_id"`
+	SchemaID       string `json:"schema_id"`
+	Version        int64  `json:"version"`
+	DepNamespaceID string `json:"dep_namespace_id"`
+	DepSchemaID    string `json:"dep_schema_id"`
+	DepFilename    string `json:"dep_filename"`
+	DepVersion     int64  `json:"dep_version"`
+}
+
+func (q *Queries) GetVersionDeps(ctx context.Context, arg GetVersionDepsParams) ([]GetVersionDepsRow, error) {
 	rows, err := q.db.Query(ctx, getVersionDeps, arg.NamespaceID, arg.SchemaID, arg.Version)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SchemaVersionDep{}
+	items := []GetVersionDepsRow{}
 	for rows.Next() {
-		var i SchemaVersionDep
+		var i GetVersionDepsRow
 		if err := rows.Scan(
 			&i.NamespaceID,
 			&i.SchemaID,
 			&i.Version,
+			&i.DepNamespaceID,
 			&i.DepSchemaID,
 			&i.DepFilename,
 			&i.DepVersion,
@@ -182,17 +250,21 @@ func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) er
 }
 
 const insertVersionDep = `-- name: InsertVersionDep :exec
-INSERT INTO schema_version_deps (namespace_id, schema_id, version, dep_schema_id, dep_filename, dep_version)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO schema_version_deps (
+    namespace_id, schema_id, version,
+    dep_namespace_id, dep_schema_id, dep_filename, dep_version
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type InsertVersionDepParams struct {
-	NamespaceID string `json:"namespace_id"`
-	SchemaID    string `json:"schema_id"`
-	Version     int64  `json:"version"`
-	DepSchemaID string `json:"dep_schema_id"`
-	DepFilename string `json:"dep_filename"`
-	DepVersion  int64  `json:"dep_version"`
+	NamespaceID    string `json:"namespace_id"`
+	SchemaID       string `json:"schema_id"`
+	Version        int64  `json:"version"`
+	DepNamespaceID string `json:"dep_namespace_id"`
+	DepSchemaID    string `json:"dep_schema_id"`
+	DepFilename    string `json:"dep_filename"`
+	DepVersion     int64  `json:"dep_version"`
 }
 
 func (q *Queries) InsertVersionDep(ctx context.Context, arg InsertVersionDepParams) error {
@@ -200,6 +272,7 @@ func (q *Queries) InsertVersionDep(ctx context.Context, arg InsertVersionDepPara
 		arg.NamespaceID,
 		arg.SchemaID,
 		arg.Version,
+		arg.DepNamespaceID,
 		arg.DepSchemaID,
 		arg.DepFilename,
 		arg.DepVersion,
