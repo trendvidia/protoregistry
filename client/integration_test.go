@@ -282,4 +282,80 @@ func TestIntegration(t *testing.T) {
 		_, err = missing.FindMessageByName("billing.Config")
 		require.ErrorIs(t, err, protoregistry.NotFound)
 	})
+
+	t.Run("WithServerChain_ResolvesAncestorTypes", func(t *testing.T) {
+		// Server-authoritative hierarchy: child is set as a child of
+		// parent via SetNamespaceParent; client.New with WithServerChain
+		// then discovers the chain automatically and resolves parent's
+		// types through the auto-wired ancestor Resolver.
+		const (
+			parentNS = "wsc-shared"
+			childNS  = "wsc-billing"
+		)
+		srv.PublishAndPromote(t, parentNS, "commons", map[string][]byte{
+			"shared/money.proto": []byte(`syntax = "proto3";
+package shared;
+message Money {
+  string currency = 1;
+  int64 amount = 2;
+}
+`),
+		})
+		srv.CreateNamespace(t, childNS)
+		srv.SetNamespaceParent(t, childNS, parentNS)
+
+		// Child publishes a schema importing the parent's file. The
+		// publish itself walks the chain on the server side; the test
+		// here is that the *client* can see the parent's types via
+		// chain expansion at construction time.
+		srv.PublishAndPromote(t, childNS, "invoice", map[string][]byte{
+			"billing/invoice.proto": []byte(`syntax = "proto3";
+package billing;
+import "shared/money.proto";
+message Invoice {
+  string id = 1;
+  shared.Money total = 2;
+}
+`),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, childNS,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		// Child's own type — local lookup.
+		invoice, err := r.FindMessageByName("billing.Invoice")
+		require.NoError(t, err)
+		require.Equal(t, protoreflect.FullName("billing.Invoice"), invoice.Descriptor().FullName())
+
+		// Parent's type — only reachable because WithServerChain wired
+		// up the ancestor Resolver as parent.
+		money, err := r.FindMessageByName("shared.Money")
+		require.NoError(t, err)
+		require.Equal(t, protoreflect.FullName("shared.Money"), money.Descriptor().FullName())
+	})
+
+	t.Run("WithServerChain_RootNamespaceWorksWithoutAncestors", func(t *testing.T) {
+		// A namespace with no parent should produce a single-element
+		// chain. WithServerChain on it must work the same as not using
+		// the option — proves the chain expansion handles the trivial
+		// case correctly.
+		const ns = "wsc-root"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, ns,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		_, err = r.FindMessageByName("billing.Config")
+		require.NoError(t, err)
+	})
 }

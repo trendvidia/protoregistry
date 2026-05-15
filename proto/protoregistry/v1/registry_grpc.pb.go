@@ -32,6 +32,7 @@ const (
 	RegistryService_SetNamespaceParent_FullMethodName = "/protoregistry.v1.RegistryService/SetNamespaceParent"
 	RegistryService_GetRebaseStatus_FullMethodName    = "/protoregistry.v1.RegistryService/GetRebaseStatus"
 	RegistryService_Rebase_FullMethodName             = "/protoregistry.v1.RegistryService/Rebase"
+	RegistryService_GetNamespaceChain_FullMethodName  = "/protoregistry.v1.RegistryService/GetNamespaceChain"
 )
 
 // RegistryServiceClient is the client API for RegistryService service.
@@ -73,6 +74,12 @@ type RegistryServiceClient interface {
 	// per-import pins (see decision D3) are refreshed. Gated by the
 	// deployment's Authorizer.
 	Rebase(ctx context.Context, in *RebaseRequest, opts ...grpc.CallOption) (*RebaseResponse, error)
+	// GetNamespaceChain returns the resolution chain for a namespace as
+	// an ordered slice of namespace IDs (child-first). Used by clients
+	// that want to mirror the server's authoritative hierarchy view —
+	// e.g., the SDK's WithServerChain option that auto-configures
+	// ancestor resolvers as parents. Read-only.
+	GetNamespaceChain(ctx context.Context, in *GetNamespaceChainRequest, opts ...grpc.CallOption) (*GetNamespaceChainResponse, error)
 }
 
 type registryServiceClient struct {
@@ -213,6 +220,16 @@ func (c *registryServiceClient) Rebase(ctx context.Context, in *RebaseRequest, o
 	return out, nil
 }
 
+func (c *registryServiceClient) GetNamespaceChain(ctx context.Context, in *GetNamespaceChainRequest, opts ...grpc.CallOption) (*GetNamespaceChainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNamespaceChainResponse)
+	err := c.cc.Invoke(ctx, RegistryService_GetNamespaceChain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RegistryServiceServer is the server API for RegistryService service.
 // All implementations must embed UnimplementedRegistryServiceServer
 // for forward compatibility.
@@ -252,6 +269,12 @@ type RegistryServiceServer interface {
 	// per-import pins (see decision D3) are refreshed. Gated by the
 	// deployment's Authorizer.
 	Rebase(context.Context, *RebaseRequest) (*RebaseResponse, error)
+	// GetNamespaceChain returns the resolution chain for a namespace as
+	// an ordered slice of namespace IDs (child-first). Used by clients
+	// that want to mirror the server's authoritative hierarchy view —
+	// e.g., the SDK's WithServerChain option that auto-configures
+	// ancestor resolvers as parents. Read-only.
+	GetNamespaceChain(context.Context, *GetNamespaceChainRequest) (*GetNamespaceChainResponse, error)
 	mustEmbedUnimplementedRegistryServiceServer()
 }
 
@@ -300,6 +323,9 @@ func (UnimplementedRegistryServiceServer) GetRebaseStatus(context.Context, *GetR
 }
 func (UnimplementedRegistryServiceServer) Rebase(context.Context, *RebaseRequest) (*RebaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Rebase not implemented")
+}
+func (UnimplementedRegistryServiceServer) GetNamespaceChain(context.Context, *GetNamespaceChainRequest) (*GetNamespaceChainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNamespaceChain not implemented")
 }
 func (UnimplementedRegistryServiceServer) mustEmbedUnimplementedRegistryServiceServer() {}
 func (UnimplementedRegistryServiceServer) testEmbeddedByValue()                         {}
@@ -556,6 +582,24 @@ func _RegistryService_Rebase_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RegistryService_GetNamespaceChain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNamespaceChainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServiceServer).GetNamespaceChain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RegistryService_GetNamespaceChain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServiceServer).GetNamespaceChain(ctx, req.(*GetNamespaceChainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RegistryService_ServiceDesc is the grpc.ServiceDesc for RegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -614,6 +658,10 @@ var RegistryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Rebase",
 			Handler:    _RegistryService_Rebase_Handler,
+		},
+		{
+			MethodName: "GetNamespaceChain",
+			Handler:    _RegistryService_GetNamespaceChain_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

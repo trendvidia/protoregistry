@@ -54,6 +54,13 @@ service RegistryService {
   // per-import pins (see decision D3) are refreshed. Gated by the
   // deployment's Authorizer.
   rpc Rebase(RebaseRequest) returns (RebaseResponse);
+
+  // GetNamespaceChain returns the resolution chain for a namespace as
+  // an ordered slice of namespace IDs (child-first). Used by clients
+  // that want to mirror the server's authoritative hierarchy view —
+  // e.g., the SDK's WithServerChain option that auto-configures
+  // ancestor resolvers as parents. Read-only.
+  rpc GetNamespaceChain(GetNamespaceChainRequest) returns (GetNamespaceChainResponse);
 }
 
 // --- Publish ---
@@ -280,4 +287,17 @@ message RebaseResponse {
   // True when the rebase produced no change — the schema was already
   // pinned to the parent's current state.
   bool no_change = 3;
+}
+
+// --- GetNamespaceChain ---
+
+message GetNamespaceChainRequest {
+  string namespace_id = 1;
+}
+
+message GetNamespaceChainResponse {
+  // Ordered child → root. The named namespace is at index 0; its parent
+  // (if any) at index 1; etc. The implicit __builtins__ and Google WKT
+  // tiers are not included.
+  repeated string namespace_ids = 1;
 }

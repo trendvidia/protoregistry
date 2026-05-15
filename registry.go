@@ -468,6 +468,27 @@ func (r *Registry) Namespaces() *namespace.Registry {
 	return r.namespaces
 }
 
+// GetNamespaceChain returns the resolution chain for a namespace as an
+// ordered slice of namespace IDs, child-first (the namespace itself at
+// index 0, then its parent, grandparent, etc.). The implicit
+// __builtins__ and Google WKT tiers are not included — they are
+// resolver-level concerns, not addressable namespaces.
+//
+// Read-only and not gated by authz; the chain is structural metadata.
+// Returns an error only when the namespace doesn't exist.
+func (r *Registry) GetNamespaceChain(_ context.Context, namespaceID string) ([]string, error) {
+	ns := r.namespaces.Get(namespaceID)
+	if ns == nil {
+		return nil, fmt.Errorf("namespace %s not found", namespaceID)
+	}
+	chain := ns.Chain()
+	ids := make([]string, len(chain))
+	for i, n := range chain {
+		ids[i] = n.ID()
+	}
+	return ids, nil
+}
+
 // CreateNamespaceRequest contains the parameters for creating a namespace.
 // Compared to the implicit creation that happens during Publish, this lets
 // callers establish a namespace explicitly — typically because they want

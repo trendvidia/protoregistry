@@ -72,6 +72,12 @@ type Resolver struct {
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// ancestors holds Resolvers for each ancestor namespace when this
+	// Resolver was constructed with WithServerChain. Closed in reverse
+	// order on Close so refresh goroutines stop cleanly. Empty when
+	// no chain expansion was performed.
+	ancestors []*Resolver
 }
 
 // SchemaResolver narrows lookups to a single schema within a namespace.
@@ -102,6 +108,67 @@ func New(ctx context.Context, conn *grpc.ClientConn, namespace string, opts ...O
 	cfg := defaultConfig()
 	for _, o := range opts {
 		o(&cfg)
+	}
+
+	if !cfg.useServerChain {
+		return newSingleNamespace(ctx, conn, namespace, cfg, nil)
+	}
+
+	// Chain expansion: ask the registry which namespaces are ancestors,
+	// then construct a Resolver per ancestor (sharing the same conn) and
+	// wire the nearest ancestor as the parent of the main Resolver.
+	rpc := registrypb.NewRegistryServiceClient(conn)
+	resp, err := rpc.GetNamespaceChain(ctx, &registrypb.GetNamespaceChainRequest{NamespaceId: namespace})
+	if err != nil {
+		return nil, fmt.Errorf("protoregistry/client: fetching namespace chain for %s: %w", namespace, err)
+	}
+	chain := resp.NamespaceIds
+	if len(chain) == 0 || chain[0] != namespace {
+		return nil, fmt.Errorf("protoregistry/client: malformed chain for %s: %v", namespace, chain)
+	}
+
+	// Ancestors inherit the auth config (token, logger) but not the
+	// schema filter or the chain flag — they load their full namespace
+	// and don't recurse into their own ancestors (the chain already
+	// walks the full hierarchy).
+	ancestorCfg := cfg
+	ancestorCfg.schemas = nil
+	ancestorCfg.useServerChain = false
+
+	var parent *Resolver
+	ancestors := make([]*Resolver, 0, len(chain)-1)
+	for i := len(chain) - 1; i >= 1; i-- {
+		a, err := newSingleNamespace(ctx, conn, chain[i], ancestorCfg, parent)
+		if err != nil {
+			for _, prev := range ancestors {
+				_ = prev.Close()
+			}
+			return nil, fmt.Errorf("protoregistry/client: loading ancestor %s: %w", chain[i], err)
+		}
+		ancestors = append(ancestors, a)
+		parent = a
+	}
+
+	main, err := newSingleNamespace(ctx, conn, namespace, cfg, parent)
+	if err != nil {
+		for _, a := range ancestors {
+			_ = a.Close()
+		}
+		return nil, err
+	}
+	main.ancestors = ancestors
+	return main, nil
+}
+
+// newSingleNamespace constructs a Resolver for one namespace without any
+// chain expansion. If parent is non-nil, its namespace-wide registries
+// become this Resolver's parent for fallback lookups (overriding any
+// cfg.parentFiles/cfg.parentTypes set via WithFallback/WithParent —
+// the server-derived chain takes precedence).
+func newSingleNamespace(ctx context.Context, conn *grpc.ClientConn, namespace string, cfg config, parent *Resolver) (*Resolver, error) {
+	if parent != nil {
+		cfg.parentFiles = parent.nsFiles
+		cfg.parentTypes = parent.nsTypes
 	}
 
 	r := &Resolver{
@@ -161,6 +228,11 @@ func Dial(ctx context.Context, addr, namespace string, opts ...Option) (*Resolve
 // Close stops the background refresh goroutine. If the Resolver was
 // created via [Dial] it also closes the underlying gRPC connection;
 // otherwise the conn was passed in by the caller and is left alone.
+//
+// When the Resolver was constructed with [WithServerChain], Close also
+// stops the refresh goroutines of every ancestor Resolver it created.
+// Ancestors share the same gRPC connection, so conn closure (if owned)
+// happens once at the end.
 func (r *Resolver) Close() error {
 	if r == nil {
 		return nil
@@ -168,6 +240,9 @@ func (r *Resolver) Close() error {
 	if r.cancel != nil {
 		r.cancel()
 		r.wg.Wait()
+	}
+	for _, a := range r.ancestors {
+		_ = a.Close()
 	}
 	if r.ownsConn && r.conn != nil {
 		return r.conn.Close()
@@ -402,6 +477,14 @@ type config struct {
 	logger  *slog.Logger
 	token   string // only honored by Dial; New callers configure auth on the conn
 
+	// useServerChain, when true, makes New consult GetNamespaceChain on
+	// startup and construct ancestor resolvers automatically, wiring the
+	// nearest ancestor's nsFiles/nsTypes as parentFiles/parentTypes.
+	// Mutually-exclusive in practice with WithParent/WithFallback/
+	// WithGlobalFallback (the server-derived chain overwrites whatever
+	// parent was previously configured — last writer wins among options).
+	useServerChain bool
+
 	// Optional parent registries for hierarchical fallback. When set,
 	// the namespace-wide nsFiles / nsTypes and each per-schema
 	// NamespacedFiles / NamespacedTypes are constructed as children of
@@ -465,6 +548,11 @@ func WithToken(token string) Option {
 // Calling WithFallback twice — or combining it with [WithParent] /
 // [WithGlobalFallback] — overrides the previous setting (last writer
 // wins).
+//
+// Note: for namespace-hierarchy use cases (org-shared types living in
+// a parent namespace on the server), prefer [WithServerChain] — it
+// consults the registry's authoritative chain, so client and server
+// can't disagree about what types are visible.
 func WithFallback(files *protoregistry.NamespacedFiles, types *protoregistry.NamespacedTypes) Option {
 	return func(c *config) {
 		c.parentFiles = files
@@ -485,6 +573,11 @@ func WithFallback(files *protoregistry.NamespacedFiles, types *protoregistry.Nam
 //
 // Equivalent to calling [WithFallback] with the parent's nsFiles /
 // nsTypes.
+//
+// Note: for namespace-hierarchy use cases (the parent namespace lives
+// on the server as the registry-known ancestor), prefer
+// [WithServerChain] — it sources the chain from the registry rather
+// than the client, eliminating drift.
 func WithParent(parent *Resolver) Option {
 	return func(c *config) {
 		if parent == nil {
@@ -507,12 +600,44 @@ func WithParent(parent *Resolver) Option {
 //
 // Equivalent to calling [WithFallback] with a pair of global-wrapping
 // registries derived from [protoregistry.NewNamespaceOverGlobal].
+//
+// Note: for namespace-hierarchy use cases (org-shared types living in
+// a parent namespace on the server), prefer [WithServerChain] — it
+// consults the registry's authoritative chain rather than relying on
+// client-side configuration that could drift.
 func WithGlobalFallback() Option {
 	return func(c *config) {
 		ns := protoregistry.NewNamespaceOverGlobal()
 		c.parentFiles = ns.Files
 		c.parentTypes = ns.Types
 	}
+}
+
+// WithServerChain makes the Resolver consult the registry's
+// GetNamespaceChain RPC at construction time and auto-configure
+// ancestor Resolvers as parents. Each ancestor in the chain (parent,
+// grandparent, …) is loaded as its own Resolver sharing the same gRPC
+// connection, with its own refresh goroutine; the nearest ancestor's
+// namespace-wide registries become the immediate parent of this
+// Resolver.
+//
+// This is the recommended way to consume org-shared types: the
+// registry is the single source of truth for which namespaces are in
+// the chain, so the client cannot disagree with the server about what
+// types are visible.
+//
+// Combining WithServerChain with [WithParent] / [WithFallback] /
+// [WithGlobalFallback] is "last writer wins" on the parentFiles /
+// parentTypes pair — if WithServerChain is the last option applied,
+// the server chain overwrites whatever was previously configured. In
+// practice the two patterns serve different use cases (server-derived
+// org chain vs. ad-hoc test/library scenarios) and shouldn't be
+// combined.
+//
+// The constructed ancestor Resolvers are closed when the main
+// Resolver's Close is called; refresh goroutines stop cleanly.
+func WithServerChain() Option {
+	return func(c *config) { c.useServerChain = true }
 }
 
 // --- internal helpers ---
