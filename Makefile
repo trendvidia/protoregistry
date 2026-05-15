@@ -6,7 +6,7 @@
 
 GO            ?= go
 PKGS          ?= ./...
-UNIT_PKGS     ?= ./snapshot/... ./compiler/... ./compat/... ./namespace/... ./resolve/...
+UNIT_PKGS     ?= ./snapshot/... ./compiler/... ./compat/... ./namespace/... ./resolve/... ./authz/...
 
 .PHONY: all
 all: vet test-unit
@@ -41,8 +41,10 @@ headers:
 headers-check:
 	./scripts/add-license-header.sh --check
 
-# Regenerate sqlc and protoc outputs. Requires `sqlc`, `protoc`,
-# `protoc-gen-go`, `protoc-gen-go-grpc` on PATH.
+# Regenerate sqlc and buf outputs. Requires `sqlc` and `buf` on PATH.
+# Buf fetches the protoc-gen-go and protoc-gen-go-grpc plugins from
+# buf.build at generation time, so contributors do not need them
+# installed locally.
 .PHONY: generate
 generate: generate-sqlc generate-proto
 
@@ -52,10 +54,29 @@ generate-sqlc:
 
 .PHONY: generate-proto
 generate-proto:
-	protoc --proto_path=proto \
-		--go_out=proto --go_opt=paths=source_relative \
-		--go-grpc_out=proto --go-grpc_opt=paths=source_relative \
-		proto/protoregistry/v1/registry.proto
+	buf generate
+
+# Lint the proto API against the STANDARD rule set defined in buf.yaml.
+.PHONY: buf-lint
+buf-lint:
+	buf lint
+
+# Check for breaking changes against the main branch. Useful in CI on PRs
+# that touch proto. Override the base with BUF_BREAKING_AGAINST=...
+BUF_BREAKING_AGAINST ?= .git#branch=main
+.PHONY: buf-breaking
+buf-breaking:
+	buf breaking --against '$(BUF_BREAKING_AGAINST)'
+
+# Canonicalize proto formatting. Mutates files in place; use buf-format-check
+# in CI to verify without writing.
+.PHONY: buf-format
+buf-format:
+	buf format -w
+
+.PHONY: buf-format-check
+buf-format-check:
+	buf format --diff --exit-code
 
 .PHONY: clean
 clean:

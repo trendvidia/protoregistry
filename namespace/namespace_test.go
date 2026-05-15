@@ -4,6 +4,7 @@
 package namespace
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -205,6 +206,80 @@ func TestNamespaceConcurrentSwaps(t *testing.T) {
 func TestNamespaceString(t *testing.T) {
 	ns := newNamespace("acme")
 	assert.Equal(t, "namespace(acme)", ns.String())
+}
+
+func TestNamespaceParentDefaultNil(t *testing.T) {
+	ns := newNamespace("acme")
+	assert.Nil(t, ns.Parent(), "fresh namespace has no parent")
+}
+
+func TestNamespaceSetAndGetParent(t *testing.T) {
+	child := newNamespace("child")
+	parent := newNamespace("parent")
+
+	child.SetParent(parent)
+	assert.Same(t, parent, child.Parent())
+
+	child.SetParent(nil)
+	assert.Nil(t, child.Parent(), "SetParent(nil) clears the parent")
+}
+
+func TestNamespaceChainSingle(t *testing.T) {
+	ns := newNamespace("solo")
+	chain := ns.Chain()
+	assert.Len(t, chain, 1)
+	assert.Same(t, ns, chain[0])
+}
+
+func TestNamespaceChainMultiLevel(t *testing.T) {
+	grand := newNamespace("grand")
+	parent := newNamespace("parent")
+	child := newNamespace("child")
+
+	parent.SetParent(grand)
+	child.SetParent(parent)
+
+	chain := child.Chain()
+	assert.Len(t, chain, 3)
+	assert.Same(t, child, chain[0], "self is at index 0")
+	assert.Same(t, parent, chain[1])
+	assert.Same(t, grand, chain[2])
+}
+
+// TestNamespaceChainCycleGuard verifies the in-memory cycle guard. The
+// store layer prevents cycles at write time, but if one ever lands in
+// memory (rehydration bug, future test scenario), Chain() must not spin.
+func TestNamespaceChainCycleGuard(t *testing.T) {
+	a := newNamespace("a")
+	b := newNamespace("b")
+	a.SetParent(b)
+	b.SetParent(a) // cycle: a → b → a
+
+	chain := a.Chain()
+	// The exact length is a→b plus the cycle-detection break, so 2.
+	// The important property is that the call terminates and contains
+	// no duplicates.
+	assert.LessOrEqual(t, len(chain), chainMaxDepth)
+	seen := map[*Namespace]bool{}
+	for _, ns := range chain {
+		assert.False(t, seen[ns], "Chain must not contain duplicates")
+		seen[ns] = true
+	}
+}
+
+func TestNamespaceChainDepthBound(t *testing.T) {
+	// Build a linear chain longer than chainMaxDepth and confirm Chain()
+	// truncates rather than running unbounded.
+	nodes := make([]*Namespace, chainMaxDepth+10)
+	for i := range nodes {
+		nodes[i] = newNamespace(fmt.Sprintf("ns%d", i))
+	}
+	for i := 0; i < len(nodes)-1; i++ {
+		nodes[i].SetParent(nodes[i+1])
+	}
+
+	chain := nodes[0].Chain()
+	assert.LessOrEqual(t, len(chain), chainMaxDepth)
 }
 
 // TestNamespaceHotSwapMonotonicity hammers the atomic.Pointer hot-swap

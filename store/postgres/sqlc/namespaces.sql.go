@@ -7,25 +7,44 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearNamespaceParent = `-- name: ClearNamespaceParent :execrows
+UPDATE namespaces
+SET parent_namespace_id = NULL
+WHERE id = $1
+`
+
+// ClearNamespaceParent removes the parent linkage (resets to NULL, which
+// is the implicit root). No cycle check needed.
+func (q *Queries) ClearNamespaceParent(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, clearNamespaceParent, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createNamespace = `-- name: CreateNamespace :exec
-INSERT INTO namespaces (id, metadata)
-VALUES ($1, $2)
+INSERT INTO namespaces (id, metadata, parent_namespace_id)
+VALUES ($1, $2, $3)
 `
 
 type CreateNamespaceParams struct {
-	ID       string `json:"id"`
-	Metadata []byte `json:"metadata"`
+	ID                string      `json:"id"`
+	Metadata          []byte      `json:"metadata"`
+	ParentNamespaceID pgtype.Text `json:"parent_namespace_id"`
 }
 
 func (q *Queries) CreateNamespace(ctx context.Context, arg CreateNamespaceParams) error {
-	_, err := q.db.Exec(ctx, createNamespace, arg.ID, arg.Metadata)
+	_, err := q.db.Exec(ctx, createNamespace, arg.ID, arg.Metadata, arg.ParentNamespaceID)
 	return err
 }
 
 const getNamespace = `-- name: GetNamespace :one
-SELECT id, created_at, deleted_at, metadata
+SELECT id, created_at, deleted_at, metadata, parent_namespace_id
 FROM namespaces
 WHERE id = $1
 `
@@ -38,12 +57,13 @@ func (q *Queries) GetNamespace(ctx context.Context, id string) (Namespace, error
 		&i.CreatedAt,
 		&i.DeletedAt,
 		&i.Metadata,
+		&i.ParentNamespaceID,
 	)
 	return i, err
 }
 
 const listNamespaces = `-- name: ListNamespaces :many
-SELECT id, created_at, deleted_at, metadata
+SELECT id, created_at, deleted_at, metadata, parent_namespace_id
 FROM namespaces
 WHERE deleted_at IS NULL
 ORDER BY id
@@ -63,6 +83,7 @@ func (q *Queries) ListNamespaces(ctx context.Context) ([]Namespace, error) {
 			&i.CreatedAt,
 			&i.DeletedAt,
 			&i.Metadata,
+			&i.ParentNamespaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -75,7 +96,7 @@ func (q *Queries) ListNamespaces(ctx context.Context) ([]Namespace, error) {
 }
 
 const listNamespacesPage = `-- name: ListNamespacesPage :many
-SELECT id, created_at, deleted_at, metadata
+SELECT id, created_at, deleted_at, metadata, parent_namespace_id
 FROM namespaces
 WHERE deleted_at IS NULL
   AND id > $1
@@ -105,6 +126,7 @@ func (q *Queries) ListNamespacesPage(ctx context.Context, arg ListNamespacesPage
 			&i.CreatedAt,
 			&i.DeletedAt,
 			&i.Metadata,
+			&i.ParentNamespaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -114,6 +136,47 @@ func (q *Queries) ListNamespacesPage(ctx context.Context, arg ListNamespacesPage
 		return nil, err
 	}
 	return items, nil
+}
+
+const setNamespaceParent = `-- name: SetNamespaceParent :execrows
+WITH RECURSIVE ancestors AS (
+    SELECT id, parent_namespace_id, 1 AS depth
+    FROM namespaces
+    WHERE id = $1::text
+    UNION ALL
+    SELECT n.id, n.parent_namespace_id, a.depth + 1
+    FROM namespaces n
+    JOIN ancestors a ON n.id = a.parent_namespace_id
+    WHERE a.depth < 64
+)
+UPDATE namespaces
+SET parent_namespace_id = $1::text
+WHERE id = $2::text
+  AND $2::text <> $1::text
+  AND EXISTS (SELECT 1 FROM namespaces WHERE id = $1::text)
+  AND NOT EXISTS (SELECT 1 FROM ancestors WHERE id = $2::text)
+`
+
+type SetNamespaceParentParams struct {
+	NewParentID string `json:"new_parent_id"`
+	NamespaceID string `json:"namespace_id"`
+}
+
+// SetNamespaceParent atomically sets a namespace's parent with cycle
+// prevention via a recursive CTE. Returns the number of affected rows: 0
+// means either the namespace doesn't exist, the parent doesn't exist, or
+// setting this parent would create a cycle (including self-reference).
+// Callers should treat 0 as a logical failure and report accordingly.
+//
+// The depth bound (64) is a safety guard: PostgreSQL does not auto-detect
+// cycles in recursive CTEs and would loop indefinitely on a pre-existing
+// cycle. 64 is far beyond any reasonable hierarchy depth.
+func (q *Queries) SetNamespaceParent(ctx context.Context, arg SetNamespaceParentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setNamespaceParent, arg.NewParentID, arg.NamespaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const softDeleteNamespace = `-- name: SoftDeleteNamespace :exec

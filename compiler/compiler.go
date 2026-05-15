@@ -20,6 +20,7 @@ import (
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/linker"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
@@ -62,19 +63,41 @@ type FileResult struct {
 }
 
 // Dep records a dependency on another schema's file used during compilation.
+//
+// DepNamespaceID identifies which namespace contributed the file. For
+// same-namespace dependencies (cross-schema imports within the publishing
+// namespace) this equals the publishing namespace's ID. For cross-namespace
+// dependencies resolved via the namespace hierarchy, this is the ancestor
+// namespace that supplied the file. See docs/design/namespace-hierarchy.md
+// decision D3.
 type Dep struct {
-	DepSchemaID string
-	DepFilename string
-	DepVersion  uint64
+	DepNamespaceID string
+	DepSchemaID    string
+	DepFilename    string
+	DepVersion     uint64
 }
 
-// DepSource describes a file available from another schema in the namespace.
-// These are provided to the compiler so it can resolve cross-schema imports.
+// DepSource describes a file available to the compiler from another schema.
+// Namespace identifies the contributing namespace. For same-namespace deps
+// this equals the publishing namespace's ID; for parent-chain tiers this is
+// the ancestor's ID.
 type DepSource struct {
-	SchemaID string
-	Version  uint64
-	Filename string
-	Source   []byte
+	Namespace string
+	SchemaID  string
+	Version   uint64
+	Filename  string
+	Source    []byte
+}
+
+// ChainTier is one tier of the parent-namespace resolver chain. Each tier
+// represents one ancestor namespace's contribution to filename resolution.
+// Tiers are ordered nearest-first by the caller; the compiler walks them
+// in order and the first match wins (filename-based resolution per D7).
+type ChainTier struct {
+	// NamespaceID of this tier, for diagnostics and downstream attribution.
+	NamespaceID string
+	// Files contributed by this namespace at the pinned/current versions.
+	Files []DepSource
 }
 
 // Compiler wraps protocompile for namespace-scoped compilation.
@@ -117,16 +140,30 @@ func New(opts ...CompilerOption) *Compiler {
 }
 
 // Compile compiles the given proto sources within a namespace scope.
-// The sources map is filename → content for the schema being compiled.
-// The deps slice provides files from other schemas in the namespace that
-// may be imported. The builtins slice provides files from the built-ins
-// namespace that are available to all namespaces; they resolve after
-// namespace sources but before Google well-known types.
+//
+// Parameters:
+//   - sources: filename → content for the schema being compiled (the child).
+//   - deps: files from other schemas in the *same* namespace, available for
+//     import. Each DepSource's Namespace should equal the publishing namespace.
+//   - parentChain: ancestor namespaces in resolution order (nearest first).
+//     Each tier's files are tried after the child's own namespace tier.
+//     Pass nil or empty for namespaces without a parent.
+//   - builtins: files from the __builtins__ namespace, available to every
+//     namespace; resolve after the parent chain but before Google WKT.
+//
+// Resolution order: child sources & same-ns deps → parent chain tiers
+// (nearest first) → builtins → Google well-known types. First file whose
+// path matches wins (decision D7).
+//
+// Compile does not perform cross-tier FQN collision detection (D2). Callers
+// that need it should invoke DetectFQNConflicts on the resulting snapshot
+// against each ancestor's snapshot.
 func (c *Compiler) Compile(
 	ctx context.Context,
 	version uint64,
 	sources map[string][]byte,
 	deps []DepSource,
+	parentChain []ChainTier,
 	builtins []DepSource,
 ) (*CompileResult, error) {
 	// Up-front bounds checks. These run before any AST work so a hostile
@@ -167,8 +204,11 @@ func (c *Compiler) Compile(
 	}
 
 	// Build the resolver chain:
-	//   namespace (own sources + deps) → builtins → Google well-known types
-	resolver := buildResolverChain(sources, deps, builtins)
+	//   child namespace (own sources + deps)
+	//     → parent chain (nearest first)
+	//     → builtins
+	//     → Google well-known types
+	resolver := buildResolverChain(sources, deps, parentChain, builtins)
 
 	// Collect filenames to compile (only the schema's own files).
 	filenames := make([]string, 0, len(sources))
@@ -185,14 +225,41 @@ func (c *Compiler) Compile(
 		return nil, fmt.Errorf("compilation failed: %w", err)
 	}
 
-	// Build the file descriptor set for storage.
+	// Build the file descriptor set for storage. protocompile.Compile only
+	// returns the explicitly-requested files (the schema's own sources),
+	// so we walk each one's import tree recursively to include every
+	// transitively-imported file. Without this, the stored FDS would
+	// reference parent-chain and same-namespace dep files by path but
+	// not carry their definitions, and Restore's fast path would fail
+	// with "could not resolve import". Well-known types are included as
+	// well — protodesc.NewFiles doesn't fall back to GlobalFiles for
+	// import resolution, so any WKT a schema imports needs to be in the
+	// FDS too. The storage bloat is acceptable in exchange for the
+	// invariant that stored compiled bytes are self-contained.
 	fds := &descriptorpb.FileDescriptorSet{}
 	var fileDescriptors []protoreflect.FileDescriptor
-	for _, file := range compiled {
-		fileDescriptors = append(fileDescriptors, file)
-		if lr, ok := file.(linker.Result); ok {
-			fds.File = append(fds.File, lr.FileDescriptorProto())
+	seen := make(map[string]struct{})
+	var addFile func(fd protoreflect.FileDescriptor)
+	addFile = func(fd protoreflect.FileDescriptor) {
+		if _, dup := seen[fd.Path()]; dup {
+			return
 		}
+		seen[fd.Path()] = struct{}{}
+		// Walk imports first so the FDS is in topological order
+		// (dependencies before dependents).
+		imports := fd.Imports()
+		for i := range imports.Len() {
+			addFile(imports.Get(i).FileDescriptor)
+		}
+		fileDescriptors = append(fileDescriptors, fd)
+		if lr, ok := fd.(linker.Result); ok {
+			fds.File = append(fds.File, lr.FileDescriptorProto())
+		} else {
+			fds.File = append(fds.File, protodesc.ToFileDescriptorProto(fd))
+		}
+	}
+	for _, file := range compiled {
+		addFile(file)
 	}
 
 	serialized, err := proto.Marshal(fds)
@@ -205,14 +272,29 @@ func (c *Compiler) Compile(
 		return nil, fmt.Errorf("building snapshot: %w", err)
 	}
 
-	// Record dependencies used.
+	// Record dependencies used. Same-namespace deps and parent-chain
+	// contributions both go into the result, distinguished by
+	// DepNamespaceID. Callers (the registry) write these to
+	// schema_version_deps where they form the per-import pin
+	// (decision D3).
 	var depRecords []Dep
 	for _, d := range deps {
 		depRecords = append(depRecords, Dep{
-			DepSchemaID: d.SchemaID,
-			DepFilename: d.Filename,
-			DepVersion:  d.Version,
+			DepNamespaceID: d.Namespace,
+			DepSchemaID:    d.SchemaID,
+			DepFilename:    d.Filename,
+			DepVersion:     d.Version,
 		})
+	}
+	for _, tier := range parentChain {
+		for _, d := range tier.Files {
+			depRecords = append(depRecords, Dep{
+				DepNamespaceID: d.Namespace,
+				DepSchemaID:    d.SchemaID,
+				DepFilename:    d.Filename,
+				DepVersion:     d.Version,
+			})
+		}
 	}
 
 	return &CompileResult{
@@ -240,40 +322,57 @@ func Version() string {
 	return fmt.Sprintf("protocompile@%s+protobuf-go@%s", protocompileVersion, protobufVersion)
 }
 
-// buildResolverChain creates the 3-tier resolver:
-//  1. Namespace sources (own schema files + deps from other schemas)
-//  2. Built-in sources (files from the __builtins__ namespace)
-//  3. Google well-known types (via protocompile.WithStandardImports)
-func buildResolverChain(sources map[string][]byte, deps, builtins []DepSource) protocompile.Resolver {
-	// Tier 1: namespace sources (own + deps).
-	nsSources := make(map[string]string, len(sources)+len(deps))
+// buildResolverChain creates an N-tier resolver:
+//
+//  1. Child-namespace sources (own schema files + same-namespace deps)
+//  2. Parent-chain tiers (one per ancestor, nearest first)
+//  3. Built-in sources (the __builtins__ namespace)
+//  4. Google well-known types (via protocompile.WithStandardImports, outermost)
+//
+// Tiers are walked in order; the first file whose path matches wins
+// (decision D7 — filename-based chain resolution).
+func buildResolverChain(
+	sources map[string][]byte,
+	deps []DepSource,
+	parentChain []ChainTier,
+	builtins []DepSource,
+) protocompile.Resolver {
+	tiers := make(protocompile.CompositeResolver, 0, 2+len(parentChain))
+
+	// Tier 1: child namespace (own sources + same-namespace deps).
+	tiers = append(tiers, sourceMapResolver(sources, deps))
+
+	// Tier 2..N: parent chain (nearest first).
+	for _, tier := range parentChain {
+		if len(tier.Files) == 0 {
+			continue
+		}
+		tiers = append(tiers, sourceMapResolver(nil, tier.Files))
+	}
+
+	// Tier N+1: builtins.
+	if len(builtins) > 0 {
+		tiers = append(tiers, sourceMapResolver(nil, builtins))
+	}
+
+	// Outermost: Google well-known types.
+	return protocompile.WithStandardImports(tiers)
+}
+
+// sourceMapResolver builds a SourceResolver from the union of an optional
+// child source map and a slice of DepSources. Used to construct each tier
+// of the chain.
+func sourceMapResolver(sources map[string][]byte, deps []DepSource) *protocompile.SourceResolver {
+	merged := make(map[string]string, len(sources)+len(deps))
 	for filename, content := range sources {
-		nsSources[filename] = string(content)
+		merged[filename] = string(content)
 	}
 	for _, d := range deps {
-		nsSources[d.Filename] = string(d.Source)
+		merged[d.Filename] = string(d.Source)
 	}
-	nsResolver := &protocompile.SourceResolver{
-		Accessor: protocompile.SourceAccessorFromMap(nsSources),
+	return &protocompile.SourceResolver{
+		Accessor: protocompile.SourceAccessorFromMap(merged),
 	}
-
-	if len(builtins) == 0 {
-		return protocompile.WithStandardImports(nsResolver)
-	}
-
-	// Tier 2: built-in sources.
-	biSources := make(map[string]string, len(builtins))
-	for _, b := range builtins {
-		biSources[b.Filename] = string(b.Source)
-	}
-	biResolver := &protocompile.SourceResolver{
-		Accessor: protocompile.SourceAccessorFromMap(biSources),
-	}
-
-	// Tier 3 (outermost): Google well-known types.
-	return protocompile.WithStandardImports(
-		protocompile.CompositeResolver{nsResolver, biResolver},
-	)
 }
 
 // ComputeFingerprint computes a fingerprint over a sorted set of

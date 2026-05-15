@@ -36,8 +36,9 @@ func New(pool *pgxpool.Pool) *Store {
 
 func (s *Store) CreateNamespace(ctx context.Context, ns *store.Namespace) error {
 	return s.q.CreateNamespace(ctx, sqlc.CreateNamespaceParams{
-		ID:       ns.ID,
-		Metadata: marshalJSONOrEmpty(ns.Metadata),
+		ID:                ns.ID,
+		Metadata:          marshalJSONOrEmpty(ns.Metadata),
+		ParentNamespaceID: ptrToPgText(ns.ParentNamespaceID),
 	})
 }
 
@@ -47,10 +48,11 @@ func (s *Store) GetNamespace(ctx context.Context, id string) (*store.Namespace, 
 		return nil, fmt.Errorf("getting namespace %s: %w", id, err)
 	}
 	return &store.Namespace{
-		ID:        row.ID,
-		CreatedAt: row.CreatedAt,
-		DeletedAt: pgtimeToPtr(row.DeletedAt),
-		Metadata:  unmarshalJSONMap(row.Metadata),
+		ID:                row.ID,
+		CreatedAt:         row.CreatedAt,
+		DeletedAt:         pgtimeToPtr(row.DeletedAt),
+		Metadata:          unmarshalJSONMap(row.Metadata),
+		ParentNamespaceID: pgtextToPtr(row.ParentNamespaceID),
 	}, nil
 }
 
@@ -62,10 +64,11 @@ func (s *Store) ListNamespaces(ctx context.Context) ([]*store.Namespace, error) 
 	result := make([]*store.Namespace, len(rows))
 	for i, row := range rows {
 		result[i] = &store.Namespace{
-			ID:        row.ID,
-			CreatedAt: row.CreatedAt,
-			DeletedAt: pgtimeToPtr(row.DeletedAt),
-			Metadata:  unmarshalJSONMap(row.Metadata),
+			ID:                row.ID,
+			CreatedAt:         row.CreatedAt,
+			DeletedAt:         pgtimeToPtr(row.DeletedAt),
+			Metadata:          unmarshalJSONMap(row.Metadata),
+			ParentNamespaceID: pgtextToPtr(row.ParentNamespaceID),
 		}
 	}
 	return result, nil
@@ -82,10 +85,110 @@ func (s *Store) ListNamespacesPage(ctx context.Context, after string, limit int)
 	result := make([]*store.Namespace, len(rows))
 	for i, row := range rows {
 		result[i] = &store.Namespace{
-			ID:        row.ID,
-			CreatedAt: row.CreatedAt,
-			DeletedAt: pgtimeToPtr(row.DeletedAt),
-			Metadata:  unmarshalJSONMap(row.Metadata),
+			ID:                row.ID,
+			CreatedAt:         row.CreatedAt,
+			DeletedAt:         pgtimeToPtr(row.DeletedAt),
+			Metadata:          unmarshalJSONMap(row.Metadata),
+			ParentNamespaceID: pgtextToPtr(row.ParentNamespaceID),
+		}
+	}
+	return result, nil
+}
+
+// SetNamespaceParent sets a namespace's parent with cycle prevention and
+// records a re-parenting audit row in the same transaction (decision D9).
+// Returns store.ErrParentCycle if a cycle would be created (including
+// self-reference) and store.ErrNamespaceNotFound if either namespace is
+// missing.
+func (s *Store) SetNamespaceParent(ctx context.Context, namespaceID string, parentID *string, actorID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // safe after Commit; pgx no-op
+	qtx := s.q.WithTx(tx)
+
+	// Capture the previous parent value for the audit row.
+	existing, err := qtx.GetNamespace(ctx, namespaceID)
+	if err != nil {
+		return store.ErrNamespaceNotFound
+	}
+	previous := pgtextToPtr(existing.ParentNamespaceID)
+
+	if parentID == nil {
+		// Clearing the parent. Idempotent: rows==0 means the namespace
+		// exists (we just read it) but has no parent — that's fine.
+		if _, err := qtx.ClearNamespaceParent(ctx, namespaceID); err != nil {
+			return fmt.Errorf("clearing parent for %s: %w", namespaceID, err)
+		}
+	} else {
+		// Distinguish "not found" from "cycle" by verifying the proposed
+		// parent exists before the CTE-based UPDATE (which returns rows==0
+		// for both missing-parent and cycle).
+		if _, err := qtx.GetNamespace(ctx, *parentID); err != nil {
+			return store.ErrNamespaceNotFound
+		}
+		rows, err := qtx.SetNamespaceParent(ctx, sqlc.SetNamespaceParentParams{
+			NewParentID: *parentID,
+			NamespaceID: namespaceID,
+		})
+		if err != nil {
+			return fmt.Errorf("setting parent for %s: %w", namespaceID, err)
+		}
+		if rows == 0 {
+			// Both namespaces exist (just verified), so the only remaining
+			// failure mode is a cycle (including self-reference).
+			return store.ErrParentCycle
+		}
+	}
+
+	// Audit row in the same tx (D9). Append-only — never updated.
+	err = qtx.RecordNamespaceParentEvent(ctx, sqlc.RecordNamespaceParentEventParams{
+		NamespaceID:      namespaceID,
+		PreviousParentID: ptrToPgText(previous),
+		NewParentID:      ptrToPgText(parentID),
+		ActorID:          actorID,
+	})
+	if err != nil {
+		return fmt.Errorf("recording parent-change audit event: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// RecordNamespaceParentEvent appends to the re-parenting audit log.
+// Phase 3 callers should invoke this in the same transaction as the
+// SetNamespaceParent call for atomicity (see decision D9). Phase 1
+// ships the persistence; transactional wiring lands with the RPC.
+func (s *Store) RecordNamespaceParentEvent(ctx context.Context, ev *store.NamespaceParentEvent) error {
+	return s.q.RecordNamespaceParentEvent(ctx, sqlc.RecordNamespaceParentEventParams{
+		NamespaceID:      ev.NamespaceID,
+		PreviousParentID: ptrToPgText(ev.PreviousParentID),
+		NewParentID:      ptrToPgText(ev.NewParentID),
+		ActorID:          ev.ActorID,
+	})
+}
+
+func (s *Store) ListNamespaceParentEvents(ctx context.Context, namespaceID string, limit int) ([]*store.NamespaceParentEvent, error) {
+	rows, err := s.q.ListNamespaceParentEvents(ctx, sqlc.ListNamespaceParentEventsParams{
+		NamespaceID: namespaceID,
+		Limit:       intToInt32Clamp(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing parent events for %s: %w", namespaceID, err)
+	}
+	result := make([]*store.NamespaceParentEvent, len(rows))
+	for i, row := range rows {
+		result[i] = &store.NamespaceParentEvent{
+			ID:               row.ID,
+			NamespaceID:      row.NamespaceID,
+			PreviousParentID: pgtextToPtr(row.PreviousParentID),
+			NewParentID:      pgtextToPtr(row.NewParentID),
+			ActorID:          row.ActorID,
+			OccurredAt:       row.OccurredAt,
 		}
 	}
 	return result, nil
@@ -201,12 +304,13 @@ func (s *Store) PutVersion(ctx context.Context, ver *store.SchemaVersion, files 
 
 	for _, d := range deps {
 		err = qtx.InsertVersionDep(ctx, sqlc.InsertVersionDepParams{
-			NamespaceID: d.NamespaceID,
-			SchemaID:    d.SchemaID,
-			Version:     versionToDB(d.Version),
-			DepSchemaID: d.DepSchemaID,
-			DepFilename: d.DepFilename,
-			DepVersion:  versionToDB(d.DepVersion),
+			NamespaceID:    d.NamespaceID,
+			SchemaID:       d.SchemaID,
+			Version:        versionToDB(d.Version),
+			DepNamespaceID: d.DepNamespaceID,
+			DepSchemaID:    d.DepSchemaID,
+			DepFilename:    d.DepFilename,
+			DepVersion:     versionToDB(d.DepVersion),
 		})
 		if err != nil {
 			return fmt.Errorf("inserting version dep: %w", err)
@@ -255,6 +359,30 @@ func (s *Store) GetVersionFiles(ctx context.Context, namespaceID, schemaID strin
 			Version:     versionFromDB(row.Version),
 			Filename:    row.Filename,
 			BlobSHA256:  row.BlobSha256,
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) GetVersionDeps(ctx context.Context, namespaceID, schemaID string, version uint64) ([]store.VersionDep, error) {
+	rows, err := s.q.GetVersionDeps(ctx, sqlc.GetVersionDepsParams{
+		NamespaceID: namespaceID,
+		SchemaID:    schemaID,
+		Version:     versionToDB(version),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting version deps: %w", err)
+	}
+	result := make([]store.VersionDep, len(rows))
+	for i, row := range rows {
+		result[i] = store.VersionDep{
+			NamespaceID:    row.NamespaceID,
+			SchemaID:       row.SchemaID,
+			Version:        versionFromDB(row.Version),
+			DepNamespaceID: row.DepNamespaceID,
+			DepSchemaID:    row.DepSchemaID,
+			DepFilename:    row.DepFilename,
+			DepVersion:     versionFromDB(row.DepVersion),
 		}
 	}
 	return result, nil
@@ -522,6 +650,21 @@ func pgtimeToPtr(v pgtype.Timestamptz) *time.Time {
 		return nil
 	}
 	return &v.Time
+}
+
+func pgtextToPtr(v pgtype.Text) *string {
+	if !v.Valid {
+		return nil
+	}
+	s := v.String
+	return &s
+}
+
+func ptrToPgText(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *s, Valid: true}
 }
 
 func marshalJSONOrEmpty(m map[string]string) []byte {

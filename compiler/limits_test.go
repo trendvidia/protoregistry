@@ -25,7 +25,7 @@ func TestCompileFileCountCap(t *testing.T) {
 		"b.proto": []byte(validProto),
 		"c.proto": []byte(validProto),
 	}
-	_, err := c.Compile(context.Background(), 1, sources, nil, nil)
+	_, err := c.Compile(context.Background(), 1, sources, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected file count cap error, got nil")
 	}
@@ -40,7 +40,7 @@ func TestCompilePerFileSizeCap(t *testing.T) {
 	sources := map[string][]byte{
 		"big.proto": []byte("a really long proto that exceeds 16 bytes"),
 	}
-	_, err := c.Compile(context.Background(), 1, sources, nil, nil)
+	_, err := c.Compile(context.Background(), 1, sources, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected per-file size cap error, got nil")
 	}
@@ -54,7 +54,7 @@ func TestCompileTimeoutFires(t *testing.T) {
 	// any real work; we just want the deadline to trip.
 	c := New(WithTimeout(1 * time.Nanosecond))
 	sources := map[string][]byte{"a.proto": []byte(validProto)}
-	_, err := c.Compile(context.Background(), 1, sources, nil, nil)
+	_, err := c.Compile(context.Background(), 1, sources, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected timeout-induced compile failure, got nil")
 	}
@@ -69,7 +69,7 @@ func TestCompileTimeoutDisabled(t *testing.T) {
 	// immediately" rather than "no deadline".
 	c := New(WithTimeout(0))
 	sources := map[string][]byte{"a.proto": []byte(validProto)}
-	if _, err := c.Compile(context.Background(), 1, sources, nil, nil); err != nil {
+	if _, err := c.Compile(context.Background(), 1, sources, nil, nil, nil); err != nil {
 		t.Fatalf("compile should succeed with no timeout: %v", err)
 	}
 }

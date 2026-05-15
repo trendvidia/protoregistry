@@ -1,0 +1,11 @@
+version: v2
+# Plugin versions are pinned for reproducible code generation. When
+# bumping, run `make generate-proto` and review the diff in
+# proto/protoregistry/v1/*.pb.go before committing.
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: proto
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go:v1.6.2
+    out: proto
+    opt: paths=source_relative

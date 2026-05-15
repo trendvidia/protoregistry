@@ -48,12 +48,28 @@ func (r *Registry) Range(fn func(ns *Namespace) bool) {
 }
 
 // Namespace is an isolation boundary containing schemas.
-// Schemas within a namespace can import each other's files;
-// cross-namespace imports are not allowed.
+//
+// Schemas within a namespace can import each other's files; cross-namespace
+// imports are not allowed. However, type *resolution* may walk the
+// namespace hierarchy via the parent pointer (see SetParent / Parent /
+// Chain). Resolution chaining is distinct from imports: the chain is
+// consulted on lookup miss, but no source file ever names another
+// namespace. See docs/design/namespace-hierarchy.md for the full design.
+//
+// Phase 1 ships the parent pointer and chain accessor; phase 2 wires the
+// compiler and resolver to actually walk the chain.
 type Namespace struct {
 	id      string
+	parent  atomic.Pointer[Namespace]
 	schemas sync.Map // schema ID → *schemaSlot
 }
+
+// chainMaxDepth bounds the parent walk in Chain() as a safety guard. The
+// store layer enforces acyclicity (see SetNamespaceParent in
+// store/postgres/queries/namespaces.sql), but the in-memory model should
+// never spin forever if a cycle somehow lands in memory (e.g. a bug in a
+// future rehydration path). 64 is far beyond any reasonable hierarchy.
+const chainMaxDepth = 64
 
 func newNamespace(id string) *Namespace {
 	return &Namespace{id: id}
@@ -61,6 +77,40 @@ func newNamespace(id string) *Namespace {
 
 // ID returns the namespace identifier.
 func (ns *Namespace) ID() string { return ns.id }
+
+// Parent returns the namespace's parent in the resolution chain, or nil
+// when this namespace is a root (resolution then falls back to the
+// implicit __builtins__ namespace and then Google WKT — see decision D4).
+// Safe for concurrent use.
+func (ns *Namespace) Parent() *Namespace { return ns.parent.Load() }
+
+// SetParent atomically sets the resolution-chain parent. Pass nil to
+// clear it. Safe for concurrent use, but callers are responsible for
+// preventing cycles — the in-memory model trusts whatever the store
+// layer admitted (see SetNamespaceParent in the store package, which
+// enforces acyclicity via recursive CTE).
+func (ns *Namespace) SetParent(parent *Namespace) { ns.parent.Store(parent) }
+
+// Chain returns the resolution chain starting with this namespace and
+// walking parent pointers to the root. The slice is ordered nearest-first
+// (this namespace at index 0). Walks are bounded by chainMaxDepth as a
+// defensive guard against cycles; the implicit __builtins__ and Google
+// WKT tiers are not included (they are appended by the resolver).
+//
+// Safe for concurrent use; the snapshot reflects parent pointers as seen
+// at the moment of each Load.
+func (ns *Namespace) Chain() []*Namespace {
+	chain := make([]*Namespace, 0, 4)
+	seen := make(map[*Namespace]struct{}, 4)
+	for cur := ns; cur != nil && len(chain) < chainMaxDepth; cur = cur.parent.Load() {
+		if _, dup := seen[cur]; dup {
+			break // cycle guard — should be unreachable given store-layer checks
+		}
+		seen[cur] = struct{}{}
+		chain = append(chain, cur)
+	}
+	return chain
+}
 
 // Current returns the current snapshot for a schema, or nil if no
 // version has been promoted.

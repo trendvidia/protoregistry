@@ -25,18 +25,39 @@ WHERE namespace_id = $1 AND schema_id = $2 AND version = $3
 ORDER BY filename;
 
 -- name: InsertVersionDep :exec
-INSERT INTO schema_version_deps (namespace_id, schema_id, version, dep_schema_id, dep_filename, dep_version)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO schema_version_deps (
+    namespace_id, schema_id, version,
+    dep_namespace_id, dep_schema_id, dep_filename, dep_version
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: GetVersionDeps :many
-SELECT namespace_id, schema_id, version, dep_schema_id, dep_filename, dep_version
+SELECT namespace_id, schema_id, version,
+       dep_namespace_id, dep_schema_id, dep_filename, dep_version
 FROM schema_version_deps
 WHERE namespace_id = $1 AND schema_id = $2 AND version = $3;
 
+-- GetDependents returns same-namespace dependents of a schema. Cross-
+-- namespace dependents are returned by GetCrossNamespaceDependents.
 -- name: GetDependents :many
 SELECT DISTINCT schema_id, version
 FROM schema_version_deps
-WHERE namespace_id = $1 AND dep_schema_id = $2;
+WHERE namespace_id = $1
+  AND dep_namespace_id = $1
+  AND dep_schema_id = $2;
+
+-- GetCrossNamespaceDependents returns children that pin a specific
+-- (parent_namespace, parent_schema, parent_filename, parent_version) —
+-- "who depends on this parent file?". Used by phase 2b's Restore to
+-- rebuild compiled state and by phase 4's Rebase to find rebase-eligible
+-- children when a parent promotes.
+-- name: GetCrossNamespaceDependents :many
+SELECT DISTINCT namespace_id, schema_id, version
+FROM schema_version_deps
+WHERE dep_namespace_id = $1
+  AND dep_schema_id = $2
+  AND dep_filename = $3
+  AND dep_version = $4;
 
 -- name: SoftDeleteVersion :exec
 UPDATE schema_versions SET deleted_at = now()

@@ -148,7 +148,7 @@ message Config {
 `),
 	}
 
-	result, err := c.Compile(context.Background(), 1, sources, nil, nil)
+	result, err := c.Compile(context.Background(), 1, sources, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Snapshot should be non-nil and carry the correct version.
@@ -178,7 +178,7 @@ func TestCompile_InvalidProto(t *testing.T) {
 		"bad.proto": []byte(`this is not valid protobuf`),
 	}
 
-	_, err := c.Compile(context.Background(), 1, sources, nil, nil)
+	_, err := c.Compile(context.Background(), 1, sources, nil, nil, nil)
 	assert.Error(t, err)
 }
 
@@ -235,7 +235,7 @@ message Order {
 `),
 	}
 
-	result, err := c.Compile(context.Background(), 1, sources, nil, builtins)
+	result, err := c.Compile(context.Background(), 1, sources, nil, nil, builtins)
 	require.NoError(t, err)
 	require.NotNil(t, result.Snapshot)
 

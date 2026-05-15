@@ -38,6 +38,22 @@ service RegistryService {
 
   // CreateNamespace creates a new namespace.
   rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+
+  // SetNamespaceParent re-parents an existing namespace in the resolution
+  // chain. Recorded in an append-only audit log (see decision D9). Gated
+  // by the deployment's Authorizer.
+  rpc SetNamespaceParent(SetNamespaceParentRequest) returns (SetNamespaceParentResponse);
+
+  // GetRebaseStatus reports, for a child schema's current version, which
+  // pinned cross-namespace dependencies are behind the parent's current
+  // state. Idempotent and read-only.
+  rpc GetRebaseStatus(GetRebaseStatusRequest) returns (GetRebaseStatusResponse);
+
+  // Rebase re-resolves a child schema's parent chain against the parent's
+  // current state and publishes a new version. Sources are unchanged; the
+  // per-import pins (see decision D3) are refreshed. Gated by the
+  // deployment's Authorizer.
+  rpc Rebase(RebaseRequest) returns (RebaseResponse);
 }
 
 // --- Publish ---
@@ -193,6 +209,11 @@ message NamespaceInfo {
   string id = 1;
   google.protobuf.Timestamp created_at = 2;
   map<string, string> metadata = 3;
+  // Parent namespace in the resolution chain. Unset means this namespace
+  // is a root (resolution falls back to the implicit __builtins__ and
+  // then to Google WKT). Wired into resolution by phase 2 of the
+  // namespace-hierarchy work; see docs/design/namespace-hierarchy.md.
+  optional string parent_namespace_id = 4;
 }
 
 // --- CreateNamespace ---
@@ -200,6 +221,63 @@ message NamespaceInfo {
 message CreateNamespaceRequest {
   string id = 1;
   map<string, string> metadata = 2;
+  // Optional parent namespace for the resolution chain. The server
+  // verifies the parent exists and that the caller is authorized to
+  // create a namespace under it (see authz.CanCreateNamespace in
+  // docs/design/namespace-hierarchy.md).
+  optional string parent_namespace_id = 3;
 }
 
 message CreateNamespaceResponse {}
+
+// --- SetNamespaceParent ---
+
+message SetNamespaceParentRequest {
+  string namespace_id = 1;
+  // Unset clears the parent (resets the namespace to the implicit root,
+  // which falls back to __builtins__ and then Google WKT).
+  optional string parent_namespace_id = 2;
+}
+
+message SetNamespaceParentResponse {}
+
+// --- GetRebaseStatus ---
+
+message GetRebaseStatusRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+}
+
+message GetRebaseStatusResponse {
+  // One status per cross-namespace dependency. Same-namespace deps are
+  // not included. Empty when this schema has no parent-chain pins.
+  repeated ParentPinStatus pin_statuses = 1;
+  // True if any pin is behind the parent's current state.
+  bool rebase_available = 2;
+}
+
+message ParentPinStatus {
+  string parent_namespace_id = 1;
+  string dep_schema_id = 2;
+  string dep_filename = 3;
+  uint64 pinned_version = 4;
+  // Parent's current version of (dep_schema_id, dep_filename). Zero
+  // when the schema or file no longer exists in the parent — in that
+  // case a rebase would fail because the pinned file vanished.
+  uint64 current_version = 5;
+}
+
+// --- Rebase ---
+
+message RebaseRequest {
+  string namespace_id = 1;
+  string schema_id = 2;
+}
+
+message RebaseResponse {
+  uint64 version = 1;
+  string fingerprint = 2;
+  // True when the rebase produced no change — the schema was already
+  // pinned to the parent's current state.
+  bool no_change = 3;
+}
