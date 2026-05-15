@@ -57,6 +57,11 @@ jobs:
           # buf breaking needs full history so it can resolve the base ref.
           fetch-depth: 0
       - uses: bufbuild/buf-setup-action@v1
+      # actions/checkout fetches the base branch into refs/remotes/origin/<base>
+      # but does not create a local refs/heads/<base>. buf breaking's
+      # ".git#branch=BRANCH" syntax requires a local branch ref, so we
+      # materialize one explicitly here.
+      - run: git fetch origin "${{ github.base_ref }}:${{ github.base_ref }}"
       - run: buf breaking --against ".git#branch=${{ github.base_ref }}"
 
   build:

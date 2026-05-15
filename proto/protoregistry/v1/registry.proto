@@ -2,10 +2,10 @@ syntax = "proto3";
 
 package protoregistry.v1;
 
-option go_package = "github.com/trendvidia/protoregistry/proto/protoregistry/v1;registrypb";
-
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/descriptor.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/trendvidia/protoregistry/proto/protoregistry/v1;registrypb";
 
 // RegistryService provides a gRPC API for the proto schema registry.
 service RegistryService {
