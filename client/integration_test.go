@@ -549,4 +549,115 @@ message Invoice {
 		require.Equal(t, "shared/money.proto", fd.Path())
 		require.Equal(t, parentNS, origin)
 	})
+
+	t.Run("GetSource_OwnNamespace", func(t *testing.T) {
+		// GetSource returns the original .proto source bytes for a file
+		// owned by the bound namespace. Verifies the schema-discovery
+		// walk (filePath → schemaSnapshot) finds the right owner and
+		// fetches its bytes via the gRPC GetSource RPC.
+		const ns = "getsource-own"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, ns, client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		src, err := r.GetSource(t.Context(), "billing.proto")
+		require.NoError(t, err)
+		require.Equal(t, billingV1, string(src), "GetSource must return the exact published source bytes")
+	})
+
+	t.Run("GetSource_ServerChain_FetchesFromAncestor", func(t *testing.T) {
+		// A file lives only in the parent namespace; WithServerChain
+		// wires an ancestor Resolver so GetSource walks to it.
+		const (
+			parentNS = "getsource-shared"
+			childNS  = "getsource-billing"
+		)
+		const sharedSrc = `syntax = "proto3";
+package shared;
+message Money {
+  string currency = 1;
+  int64 amount = 2;
+}
+`
+		srv.PublishAndPromote(t, parentNS, "commons", map[string][]byte{
+			"shared/money.proto": []byte(sharedSrc),
+		})
+		srv.CreateNamespace(t, childNS)
+		srv.SetNamespaceParent(t, childNS, parentNS)
+		srv.PublishAndPromote(t, childNS, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, childNS,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		// Child-owned file.
+		src, err := r.GetSource(t.Context(), "billing.proto")
+		require.NoError(t, err)
+		require.Equal(t, billingV1, string(src))
+
+		// Parent-owned file: only reachable through the ancestor walk.
+		src, err = r.GetSource(t.Context(), "shared/money.proto")
+		require.NoError(t, err, "GetSource must walk to ancestor namespaces for chain-inherited files")
+		require.Equal(t, sharedSrc, string(src))
+	})
+
+	t.Run("GetSource_NotFound", func(t *testing.T) {
+		// An unknown path returns NotFound (not a server error).
+		const ns = "getsource-notfound"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		r, err := client.New(t.Context(), srv.Conn, ns, client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		src, err := r.GetSource(t.Context(), "does/not/exist.proto")
+		require.ErrorIs(t, err, protoregistry.NotFound, "unknown paths return NotFound, not a server error")
+		require.Nil(t, src)
+	})
+
+	t.Run("GetSource_AdHocParentReturnsNotFound", func(t *testing.T) {
+		// WithParent supplies a pre-compiled registry but no registry
+		// connection — files only reachable through that tier resolve
+		// via FindFileByPath but produce NotFound from GetSource.
+		// Documented in the GetSource godoc.
+		const sharedSrc = `syntax = "proto3"; package shared; message Trace { string id = 1; }`
+		srv.PublishAndPromote(t, "getsource-fbparent", "commons", map[string][]byte{
+			"shared.proto": []byte(sharedSrc),
+		})
+		parent, err := client.New(t.Context(), srv.Conn, "getsource-fbparent", client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = parent.Close() })
+
+		srv.PublishAndPromote(t, "getsource-fbchild", "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		child, err := client.New(t.Context(), srv.Conn, "getsource-fbchild",
+			client.WithRefreshInterval(0),
+			client.WithParent(parent),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+
+		// Child's own file: fetches fine.
+		src, err := child.GetSource(t.Context(), "billing.proto")
+		require.NoError(t, err)
+		require.Equal(t, billingV1, string(src))
+
+		// Parent's file: reachable via FindFileByPath but not GetSource.
+		_, err = child.FindFileByPath("shared.proto")
+		require.NoError(t, err, "ad-hoc parent's file IS resolvable as a descriptor")
+		_, err = child.GetSource(t.Context(), "shared.proto")
+		require.ErrorIs(t, err, protoregistry.NotFound,
+			"ad-hoc parent (WithParent) doesn't expose a connection — GetSource returns NotFound")
+	})
 }
