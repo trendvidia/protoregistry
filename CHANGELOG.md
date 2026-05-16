@@ -9,6 +9,88 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.71.0] - 2026-05-16
+
+Substantial feature release covering server-side namespace
+hierarchy plus a wave of client SDK additions (server-chain
+resolution, namespace provenance, source fetch, offline disk
+cache). All changes are additive; no client breakage.
+
+### Added — server
+
+- **Namespace hierarchy** (#8): namespaces can declare a parent
+  via `SetNamespaceParent`, forming a chain that schema-resolution
+  walks at publish, compile, and read time. Includes:
+  - New RPCs `SetNamespaceParent` / `GetNamespaceChain`.
+  - `internal/authz` package for capability-based parent-chain
+    access checks. `WithAuthorizer` injects a production
+    authorizer; the default `authz.AllowAll` is for development
+    only and logs a warning on startup.
+  - Rebase machinery (`Rebase` / `GetRebaseStatus`) for replaying
+    descendants when an ancestor changes, with audit-log entries
+    per affected schema.
+  - FQN-collision detection across the chain at publish time.
+
+### Added — client
+
+- **`client.WithServerChain()`** (#9): construct a Resolver that
+  consults `GetNamespaceChain` and automatically wires ancestor
+  Resolvers, so a single `client.New(..., namespace)` resolves
+  types declared anywhere in the namespace's chain.
+- **`Resolver.RangeMessages(f func(MessageType) bool)`** (#10):
+  iterate every message type currently visible to the resolver —
+  bound namespace plus chain ancestors. Used by editor tooling
+  building completion lists for the `@type` directive.
+- **`Resolver.FindMessageByNameWithOrigin` /
+  `Resolver.FindFileByPathWithOrigin`** (#11): like their
+  non-Origin counterparts but also return the namespace ID that
+  contributed the type / file. Useful for editor integrations
+  rendering provenance ("defined in namespace acme-shared") next
+  to hover or completion results. Empty origin string for files
+  reachable only via ad-hoc parents (`WithParent` /
+  `WithFallback` / `WithGlobalFallback`).
+- **`Resolver.GetSource(ctx, filePath)`** (#12): fetch the
+  original `.proto` source bytes for a file the resolver knows.
+  Locates the owning schema across the chain, calls the gRPC
+  `GetSource` RPC, returns the requested file's bytes. Editor
+  integrations use this to render registry-only files as virtual
+  documents in go-to-definition. Returns `NotFound` for files
+  reachable only through ad-hoc parents (no registry connection
+  on those tiers).
+- **`client.WithDiskCache(path)`** (#13): opt-in on-disk
+  descriptor cache. Successful populate / Refresh writes each
+  schema's `FileDescriptorSet` bytes plus a manifest under
+  `<path>/<namespace>/`. When `Dial` cannot reach the server,
+  loads the most recently persisted snapshot and returns a
+  stale-mode Resolver. `Resolver.IsStale()` reports the mode;
+  `Resolver.Refresh()` on a stale Resolver returns the new
+  `ErrStaleResolver` sentinel. Atomic writes (temp + rename);
+  ancestors persist into sibling subdirectories under the same
+  cacheDir; the top-level manifest records the chain so the
+  offline loader can reconstruct it without server access.
+
+### Changed
+
+- `client.Dial` flow restructured into a try-online-then-fallback
+  shape when `WithDiskCache` is configured. Without that option
+  the behavior is unchanged — dial failures surface as-is.
+- `client/snapshot.go`: `fetchSchema` now defers to a new
+  `compileSchema(schemaID, version, fdset, raw)` helper so the
+  offline cache loader can compile from disk bytes through the
+  same path. `schemaSnapshot` gains `rawDescriptorSet []byte`
+  (the wire bytes the snapshot was built from) so the disk
+  persister can write them out without re-marshaling.
+
+### Dependencies
+
+- `google.golang.org/grpc` minor + patch bumps via dependabot
+  (#2, #6).
+- `github.com/jackc/pgx/v5` 5.9.1 → 5.9.2 (#5).
+- `github.com/pressly/goose/v3` 3.27.0 → 3.27.1 (#6).
+- `testcontainers` group bump (#3).
+- `github.com/trendvidia/protowire-go` bumped to v1.0.0 (#7) —
+  pxf v1 grammar.
+
 ## [0.70.1] - 2026-05-06
 
 ### Added
