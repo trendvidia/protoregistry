@@ -751,6 +751,7 @@ message Money {
 			require.NoError(t, err, "manifest must exist for namespace %s", ns)
 		}
 
+		// #nosec G304 -- cacheDir is t.TempDir(); not attacker-controlled.
 		manBytes, err := os.ReadFile(filepath.Join(cacheDir, childNS, "manifest.json"))
 		require.NoError(t, err)
 		assert.Contains(t, string(manBytes), parentNS,

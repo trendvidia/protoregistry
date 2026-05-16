@@ -96,7 +96,10 @@ func (r *Resolver) persist() error {
 
 	nsDir := cacheNamespaceDir(r.cfg.cacheDir, r.ns)
 	schemasDir := filepath.Join(nsDir, "schemas")
-	if err := os.MkdirAll(schemasDir, 0o755); err != nil {
+	// 0o750: owner rwx, group r-x, no world. Cache holds descriptors
+	// fetched on this user's behalf; no reason for other users on a
+	// shared host to read them.
+	if err := os.MkdirAll(schemasDir, 0o750); err != nil {
 		return fmt.Errorf("creating cache dir %s: %w", schemasDir, err)
 	}
 
@@ -264,6 +267,9 @@ func loadFromCache(cacheDir, namespace string, cfg config) (*Resolver, error) {
 // inspecting the wrapped errors.
 func readManifest(cacheDir, namespace string) (*cacheManifest, error) {
 	manPath := filepath.Join(cacheNamespaceDir(cacheDir, namespace), "manifest.json")
+	// #nosec G304 -- path is composed from the caller's configured
+	// cacheDir plus the bound namespace identifier; neither is
+	// attacker-controlled at this layer.
 	manBytes, err := os.ReadFile(manPath)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest %s: %w", manPath, err)
@@ -319,7 +325,16 @@ func loadSingleNamespaceFromCache(cacheDir, namespace string, cfg config, parent
 		if !r.tracksSchema(sm.SchemaID) {
 			continue
 		}
+		// Defense-in-depth: reject manifests whose File field contains
+		// any path separator. We write our own manifests with safe
+		// "<id>@<version>.pb" names, but a tampered cache directory
+		// shouldn't be able to redirect reads outside <nsDir>/schemas/.
+		if sm.File != filepath.Base(sm.File) {
+			return nil, fmt.Errorf("cached schema file name %q contains path separators", sm.File)
+		}
 		path := filepath.Join(nsDir, "schemas", sm.File)
+		// #nosec G304 -- path is rooted at the configured cacheDir
+		// and the file name is validated above to be a bare basename.
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read cached schema %s: %w", path, err)
