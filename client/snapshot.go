@@ -9,9 +9,11 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
@@ -53,6 +55,15 @@ type schemaSnapshot struct {
 	files          *protoregistry.NamespacedFiles
 	types          *protoregistry.NamespacedTypes
 	aggFingerprint aggFingerprint
+
+	// rawDescriptorSet is the wire-format FileDescriptorSet bytes
+	// this snapshot was built from. Populated when fetched via
+	// GetDescriptor or loaded from a disk cache; the disk-cache
+	// persister writes these bytes verbatim, and the cache loader
+	// re-compiles them through the same path as fetchSchema.
+	// Empty for snapshots that pre-date the cache feature (won't
+	// be persisted but won't crash either).
+	rawDescriptorSet []byte
 }
 
 // aggFingerprint is the set of identifiers a schema contributes to the
@@ -303,13 +314,30 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 	if err != nil {
 		return nil, fmt.Errorf("get_descriptor %s/%s@%d: %w", r.ns, schemaID, version, err)
 	}
+	rawBytes, err := proto.Marshal(resp.FileDescriptorSet)
+	if err != nil {
+		return nil, fmt.Errorf("remarshal FileDescriptorSet for %s/%s@%d: %w", r.ns, schemaID, version, err)
+	}
+	return r.compileSchema(schemaID, resp.Version, resp.FileDescriptorSet, rawBytes)
+}
 
+// compileSchema turns a FileDescriptorSet into a schemaSnapshot,
+// registering every file into a fresh pair of NamespacedFiles /
+// NamespacedTypes that inherit the Resolver's configured parents.
+// rawDescriptorSet is the wire-format bytes of the same set; we
+// stash them on the snapshot so the disk-cache persister can write
+// them out without re-marshaling.
+//
+// Pulled out of fetchSchema so the disk-cache loader can construct
+// snapshots from disk bytes through exactly the same code path —
+// no semantic divergence between "live" and "cached" snapshots.
+func (r *Resolver) compileSchema(schemaID string, version uint64, fdset *descriptorpb.FileDescriptorSet, rawDescriptorSet []byte) (*schemaSnapshot, error) {
 	// Compile the wire FileDescriptorSet via protodesc to resolve
 	// cross-file dependencies, then transfer the result into a fresh
 	// pair of NamespacedFiles / NamespacedTypes registries owned by
 	// this schema. The intermediate *protoregistry.Files is dropped
 	// once registration completes.
-	compiled, err := protodesc.NewFiles(resp.FileDescriptorSet)
+	compiled, err := protodesc.NewFiles(fdset)
 	if err != nil {
 		return nil, fmt.Errorf("compiling descriptors for %s/%s@%d: %w", r.ns, schemaID, version, err)
 	}
@@ -339,11 +367,12 @@ func (r *Resolver) fetchSchema(ctx context.Context, schemaID string, version uin
 	}
 
 	return &schemaSnapshot{
-		schemaID:       schemaID,
-		version:        resp.Version,
-		files:          files,
-		types:          types,
-		aggFingerprint: fp,
+		schemaID:         schemaID,
+		version:          version,
+		files:            files,
+		types:            types,
+		aggFingerprint:   fp,
+		rawDescriptorSet: rawDescriptorSet,
 	}, nil
 }
 
