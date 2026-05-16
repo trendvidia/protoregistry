@@ -409,4 +409,144 @@ message Invoice {
 		})
 		require.Equal(t, 1, calls, "RangeMessages must stop after the callback returns false")
 	})
+
+	t.Run("FindMessageByNameWithOrigin_OwnNamespace", func(t *testing.T) {
+		// A type defined in the resolver's bound namespace resolves
+		// with origin == namespace ID.
+		const ns = "origin-own"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, ns, client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		mt, origin, err := r.FindMessageByNameWithOrigin("billing.Config")
+		require.NoError(t, err)
+		require.Equal(t, protoreflect.FullName("billing.Config"), mt.Descriptor().FullName())
+		require.Equal(t, ns, origin, "own-namespace types must report the resolver's own namespace")
+	})
+
+	t.Run("FindMessageByNameWithOrigin_ServerChain_ReportsAncestor", func(t *testing.T) {
+		// Parent has shared.Money; child binds to its own namespace.
+		// Use the existing testcontainers chain wiring: child's
+		// namespace has a server-side parent pointer to shared-ns,
+		// so WithServerChain pulls ancestor types and FindMessage*
+		// WithOrigin returns the ancestor's namespace ID.
+		const (
+			parentNS = "origin-shared"
+			childNS  = "origin-billing"
+		)
+		srv.PublishAndPromote(t, parentNS, "commons", map[string][]byte{
+			"shared/money.proto": []byte(`syntax = "proto3"; package shared; message Money { string currency = 1; }`),
+		})
+		srv.CreateNamespace(t, childNS)
+		srv.SetNamespaceParent(t, childNS, parentNS)
+		srv.PublishAndPromote(t, childNS, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, childNS,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		// Child's own type: origin is childNS.
+		_, origin, err := r.FindMessageByNameWithOrigin("billing.Config")
+		require.NoError(t, err)
+		require.Equal(t, childNS, origin)
+
+		// Parent's type: origin is parentNS.
+		_, origin, err = r.FindMessageByNameWithOrigin("shared.Money")
+		require.NoError(t, err)
+		require.Equal(t, parentNS, origin, "ancestor types must report the contributing namespace")
+	})
+
+	t.Run("FindMessageByNameWithOrigin_AdHocParentHasEmptyOrigin", func(t *testing.T) {
+		// WithParent supplies a parent registry but not its namespace
+		// identity beyond what the Resolver itself remembers. When
+		// the lookup hits the parent's tier, origin is "" — the
+		// ad-hoc parent registries don't carry an ID. Documented in
+		// the FindMessageByNameWithOrigin godoc.
+		srv.PublishAndPromote(t, "origin-fbparent", "commons", map[string][]byte{
+			"shared.proto": []byte(`syntax = "proto3"; package shared; message Trace { string id = 1; }`),
+		})
+		parent, err := client.New(t.Context(), srv.Conn, "origin-fbparent", client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = parent.Close() })
+
+		srv.PublishAndPromote(t, "origin-fbchild", "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		child, err := client.New(t.Context(), srv.Conn, "origin-fbchild",
+			client.WithRefreshInterval(0),
+			client.WithParent(parent),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+
+		// Child's own type: origin populated.
+		_, origin, err := child.FindMessageByNameWithOrigin("billing.Config")
+		require.NoError(t, err)
+		require.Equal(t, "origin-fbchild", origin)
+
+		// Parent's type via WithParent: hits cfg.parentTypes, no namespace identity.
+		_, origin, err = child.FindMessageByNameWithOrigin("shared.Trace")
+		require.NoError(t, err)
+		require.Equal(t, "", origin,
+			"WithParent supplies registries only — namespace identity is the empty string")
+	})
+
+	t.Run("FindMessageByNameWithOrigin_NotFound", func(t *testing.T) {
+		const ns = "origin-notfound"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		r, err := client.New(t.Context(), srv.Conn, ns, client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		mt, origin, err := r.FindMessageByNameWithOrigin("nowhere.Missing")
+		require.ErrorIs(t, err, protoregistry.NotFound)
+		require.Nil(t, mt)
+		require.Equal(t, "", origin, "NotFound produces zero-valued origin")
+	})
+
+	t.Run("FindFileByPathWithOrigin_ServerChain", func(t *testing.T) {
+		// Mirror of the message test for the file lookup path.
+		// The file lives in the parent namespace; child uses
+		// WithServerChain to expand the chain.
+		const (
+			parentNS = "originfp-shared"
+			childNS  = "originfp-billing"
+		)
+		srv.PublishAndPromote(t, parentNS, "commons", map[string][]byte{
+			"shared/money.proto": []byte(`syntax = "proto3"; package shared; message Money { string currency = 1; }`),
+		})
+		srv.CreateNamespace(t, childNS)
+		srv.SetNamespaceParent(t, childNS, parentNS)
+		srv.PublishAndPromote(t, childNS, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		r, err := client.New(t.Context(), srv.Conn, childNS,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		fd, origin, err := r.FindFileByPathWithOrigin("billing.proto")
+		require.NoError(t, err)
+		require.Equal(t, "billing.proto", fd.Path())
+		require.Equal(t, childNS, origin)
+
+		fd, origin, err = r.FindFileByPathWithOrigin("shared/money.proto")
+		require.NoError(t, err)
+		require.Equal(t, "shared/money.proto", fd.Path())
+		require.Equal(t, parentNS, origin)
+	})
 }

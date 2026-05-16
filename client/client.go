@@ -473,19 +473,110 @@ func (r *Resolver) RangeMessages(f func(protoreflect.MessageType) bool) {
 	}
 
 	walk(r.nsTypes)
-	// WithServerChain wires explicit ancestor Resolvers; iterate them
-	// in chain order (nearest first).
 	for _, a := range r.ancestors {
 		walk(a.nsTypes)
 	}
-	// WithParent / WithFallback / WithGlobalFallback set a single
-	// parent tier via cfg.parentTypes. Walk it when WithServerChain
-	// isn't in play — when it is, the ancestor walk above already
-	// covers the same ground (the nearest ancestor's nsTypes IS
-	// cfg.parentTypes).
 	if len(r.ancestors) == 0 {
 		walk(r.cfg.parentTypes)
 	}
+}
+
+// FindMessageByNameWithOrigin is like [Resolver.FindMessageByName] but
+// also returns the ID of the namespace that contributed the type.
+// Useful for editor integrations rendering provenance ("defined in
+// namespace acme-shared") next to hover or completion results.
+//
+// Origin semantics:
+//   - The bound namespace's local types resolve with origin == r.Namespace().
+//   - When [WithServerChain] is in effect, each ancestor tier resolves with
+//     its own namespace ID — walked nearest-first.
+//   - When [WithParent] / [WithFallback] / [WithGlobalFallback] is in effect
+//     (no WithServerChain), the parent tier resolves the type but origin
+//     is the empty string — the ad-hoc parent passes only registries, not
+//     namespace identity. Use WithServerChain for full provenance.
+//
+// On NotFound, returns ("", "", NotFound) — both return values are
+// zero so callers can ignore the origin without a nil-check.
+func (r *Resolver) FindMessageByNameWithOrigin(name protoreflect.FullName) (protoreflect.MessageType, string, error) {
+	if r == nil {
+		return nil, "", protoregistry.NotFound
+	}
+	if mt := findLocalMessage(r.nsTypes, name); mt != nil {
+		return mt, r.ns, nil
+	}
+	for _, a := range r.ancestors {
+		if mt := findLocalMessage(a.nsTypes, name); mt != nil {
+			return mt, a.ns, nil
+		}
+	}
+	if len(r.ancestors) == 0 && r.cfg.parentTypes != nil {
+		if mt, err := r.cfg.parentTypes.FindMessageByName(name); err == nil {
+			return mt, "", nil
+		}
+	}
+	return nil, "", protoregistry.NotFound
+}
+
+// FindFileByPathWithOrigin is like [Resolver.FindFileByPath] but also
+// returns the ID of the namespace that contributed the file. Same
+// origin semantics as [FindMessageByNameWithOrigin].
+//
+// Typical use: protolsp's hover handler resolves a field's
+// ParentFile().Path() through this method to label the hover with
+// "defined in namespace X" alongside the bare file path.
+func (r *Resolver) FindFileByPathWithOrigin(path string) (protoreflect.FileDescriptor, string, error) {
+	if r == nil {
+		return nil, "", protoregistry.NotFound
+	}
+	if fd := findLocalFile(r.nsFiles, path); fd != nil {
+		return fd, r.ns, nil
+	}
+	for _, a := range r.ancestors {
+		if fd := findLocalFile(a.nsFiles, path); fd != nil {
+			return fd, a.ns, nil
+		}
+	}
+	if len(r.ancestors) == 0 && r.cfg.parentFiles != nil {
+		if fd, err := r.cfg.parentFiles.FindFileByPath(path); err == nil {
+			return fd, "", nil
+		}
+	}
+	return nil, "", protoregistry.NotFound
+}
+
+// findLocalMessage scans only types registered directly on t (no
+// parent-chain walk) for the given full name. nsTypes.RangeMessages
+// is local-only by design — the parent-walking lookup methods don't
+// expose tier identity, so we iterate to get it.
+func findLocalMessage(t *protoregistry.NamespacedTypes, name protoreflect.FullName) protoreflect.MessageType {
+	if t == nil {
+		return nil
+	}
+	var found protoreflect.MessageType
+	t.RangeMessages(func(mt protoreflect.MessageType) bool {
+		if mt.Descriptor().FullName() == name {
+			found = mt
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// findLocalFile is the file-tier counterpart to findLocalMessage.
+func findLocalFile(f *protoregistry.NamespacedFiles, path string) protoreflect.FileDescriptor {
+	if f == nil {
+		return nil
+	}
+	var found protoreflect.FileDescriptor
+	f.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		if fd.Path() == path {
+			found = fd
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // --- SchemaResolver ---
