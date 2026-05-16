@@ -36,6 +36,9 @@ import (
 // per-schema views (via [SchemaResolver]) still reflect the old. For
 // schema-consistent reads, route through SchemaResolver or use [Pin].
 func (r *Resolver) Refresh(ctx context.Context) error {
+	if r.fromCache {
+		return ErrStaleResolver
+	}
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
 
@@ -153,6 +156,15 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 		"replaced", len(replaced),
 		"removed", len(removed),
 	)
+	// Persistence is best-effort: failures log but don't fail Refresh.
+	// The in-memory snapshot is already authoritative, and the next
+	// refresh tick will retry the write.
+	if r.cfg.cacheDir != "" {
+		if perr := r.persist(); perr != nil {
+			r.logger.Warn("cache persist failed; in-memory snapshot still authoritative",
+				"namespace", r.ns, "err", perr)
+		}
+	}
 	return nil
 }
 

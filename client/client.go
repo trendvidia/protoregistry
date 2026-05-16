@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
@@ -78,6 +77,19 @@ type Resolver struct {
 	// order on Close so refresh goroutines stop cleanly. Empty when
 	// no chain expansion was performed.
 	ancestors []*Resolver
+
+	// fromCache marks Resolvers constructed via the disk-cache
+	// fallback path inside [Dial]. Stale Resolvers have rpc == nil,
+	// no refresh goroutine, and return ErrStaleResolver from
+	// Refresh. Lookups against the cached snapshot work normally.
+	// See [WithDiskCache] / [Resolver.IsStale].
+	fromCache bool
+
+	// cacheMu serializes disk-cache writes so two refreshes can't
+	// interleave their atomic-rename sequences. Only used when
+	// r.cfg.cacheDir != "" — zero-value mutex is fine when
+	// caching is disabled.
+	cacheMu sync.Mutex
 }
 
 // SchemaResolver narrows lookups to a single schema within a namespace.
@@ -111,7 +123,17 @@ func New(ctx context.Context, conn *grpc.ClientConn, namespace string, opts ...O
 	}
 
 	if !cfg.useServerChain {
-		return newSingleNamespace(ctx, conn, namespace, cfg, nil)
+		r, err := newSingleNamespace(ctx, conn, namespace, cfg, nil)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.cacheDir != "" {
+			if perr := r.persist(); perr != nil {
+				r.logger.Warn("initial cache persist failed",
+					"namespace", namespace, "err", perr)
+			}
+		}
+		return r, nil
 	}
 
 	// Chain expansion: ask the registry which namespaces are ancestors,
@@ -157,6 +179,16 @@ func New(ctx context.Context, conn *grpc.ClientConn, namespace string, opts ...O
 		return nil, err
 	}
 	main.ancestors = ancestors
+	if cfg.cacheDir != "" {
+		// persist() walks ancestors, so this single call writes
+		// every namespace's snapshot plus the top-level manifest
+		// (with chain recorded). Failures log but don't fail
+		// construction — the in-memory snapshot is authoritative.
+		if perr := main.persist(); perr != nil {
+			main.logger.Warn("initial cache persist failed",
+				"namespace", namespace, "err", perr)
+		}
+	}
 	return main, nil
 }
 
@@ -198,31 +230,38 @@ func newSingleNamespace(ctx context.Context, conn *grpc.ClientConn, namespace st
 // Dial is a convenience constructor that opens an insecure gRPC connection
 // and constructs a Resolver in one call. Production callers should
 // usually build a *grpc.ClientConn themselves and pass it to [New].
+//
+// When [WithDiskCache] is configured, Dial persists the snapshot
+// after the initial populate and on every successful refresh; if
+// the online attempt fails outright (network unreachable, server
+// down), Dial falls back to loading the most recent persisted
+// snapshot from the cache and returns a stale-mode Resolver. See
+// [Resolver.IsStale]. When no cache is configured, the network
+// failure is returned as-is.
 func Dial(ctx context.Context, addr, namespace string, opts ...Option) (*Resolver, error) {
 	cfg := defaultConfig()
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	dialOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	r, onlineErr := dialOnline(ctx, addr, namespace, cfg, opts)
+	if onlineErr == nil {
+		// newSingleNamespace already persisted the initial snapshot
+		// when cacheDir is set, so the online path is complete here.
+		return r, nil
 	}
-	if cfg.token != "" {
-		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(bearerCreds{token: cfg.token}))
+	if cfg.cacheDir == "" {
+		return nil, onlineErr
 	}
-
-	conn, err := grpc.NewClient(addr, dialOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("protoregistry/client: dialing %s: %w", addr, err)
+	cached, cacheErr := loadFromCache(cfg.cacheDir, namespace, cfg)
+	if cacheErr != nil {
+		return nil, fmt.Errorf("registry unreachable (%v) and cache load failed (%v)", onlineErr, cacheErr)
 	}
-
-	r, err := New(ctx, conn, namespace, opts...)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	r.ownsConn = true
-	return r, nil
+	cached.logger.Warn("registry unreachable; serving from disk cache",
+		"namespace", namespace,
+		"address", addr,
+		"err", onlineErr)
+	return cached, nil
 }
 
 // Close stops the background refresh goroutine. If the Resolver was
@@ -731,6 +770,13 @@ type config struct {
 	// WithGlobalFallback.
 	parentFiles *protoregistry.NamespacedFiles
 	parentTypes *protoregistry.NamespacedTypes
+
+	// cacheDir, when non-empty, enables on-disk descriptor caching.
+	// The Resolver persists each successful refresh under
+	// <cacheDir>/<namespace>/ ; [Dial] falls back to loading that
+	// snapshot when the server is unreachable. See [WithDiskCache]
+	// for the full contract.
+	cacheDir string
 }
 
 func defaultConfig() config {

@@ -4,8 +4,11 @@
 package client_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -659,5 +662,99 @@ message Money {
 		_, err = child.GetSource(t.Context(), "shared.proto")
 		require.ErrorIs(t, err, protoregistry.NotFound,
 			"ad-hoc parent (WithParent) doesn't expose a connection — GetSource returns NotFound")
+	})
+
+	t.Run("DiskCache_PersistsAndReloads", func(t *testing.T) {
+		// Populate a cache via the live server, then verify the
+		// manifest + descriptor files exist on disk. Reloading from
+		// disk (the offline path) is covered in TestDiskCacheOffline.
+		const ns = "cache-roundtrip"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		cacheDir := t.TempDir()
+		live, err := client.New(t.Context(), srv.Conn, ns,
+			client.WithRefreshInterval(0),
+			client.WithDiskCache(cacheDir),
+		)
+		require.NoError(t, err)
+		require.False(t, live.IsStale(), "online Resolver must not report stale")
+		t.Cleanup(func() { _ = live.Close() })
+
+		manPath := filepath.Join(cacheDir, ns, "manifest.json")
+		_, err = os.Stat(manPath)
+		require.NoError(t, err, "manifest.json must be written after initial populate")
+
+		schemaPath := filepath.Join(cacheDir, ns, "schemas", "billing@1.pb")
+		_, err = os.Stat(schemaPath)
+		require.NoError(t, err, "schema descriptor file must be written")
+	})
+
+	t.Run("DiskCache_RefreshOverwritesCache", func(t *testing.T) {
+		// After a Refresh picks up a new schema version, the cache
+		// reflects the new bytes via the version-in-filename scheme.
+		const ns = "cache-refresh"
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		cacheDir := t.TempDir()
+		r, err := client.New(t.Context(), srv.Conn, ns,
+			client.WithRefreshInterval(0),
+			client.WithDiskCache(cacheDir),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		_, err = os.Stat(filepath.Join(cacheDir, ns, "schemas", "billing@1.pb"))
+		require.NoError(t, err)
+
+		srv.PublishAndPromote(t, ns, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV2),
+		})
+		require.NoError(t, r.Refresh(t.Context()))
+
+		_, err = os.Stat(filepath.Join(cacheDir, ns, "schemas", "billing@2.pb"))
+		require.NoError(t, err, "post-refresh cache must include the new version file")
+	})
+
+	t.Run("DiskCache_ServerChainPersistsAncestors", func(t *testing.T) {
+		// With WithServerChain, ancestor namespaces persist into
+		// their own subdirectories under the same cacheDir, and the
+		// top-level manifest records the chain so the offline loader
+		// can rebuild it without server access.
+		const (
+			parentNS = "cache-chain-shared"
+			childNS  = "cache-chain-billing"
+		)
+		srv.PublishAndPromote(t, parentNS, "commons", map[string][]byte{
+			"shared/money.proto": []byte(`syntax = "proto3"; package shared; message Money { string currency = 1; }`),
+		})
+		srv.CreateNamespace(t, childNS)
+		srv.SetNamespaceParent(t, childNS, parentNS)
+		srv.PublishAndPromote(t, childNS, "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+
+		cacheDir := t.TempDir()
+		r, err := client.New(t.Context(), srv.Conn, childNS,
+			client.WithRefreshInterval(0),
+			client.WithServerChain(),
+			client.WithDiskCache(cacheDir),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		for _, ns := range []string{childNS, parentNS} {
+			_, err := os.Stat(filepath.Join(cacheDir, ns, "manifest.json"))
+			require.NoError(t, err, "manifest must exist for namespace %s", ns)
+		}
+
+		// #nosec G304 -- cacheDir is t.TempDir(); not attacker-controlled.
+		manBytes, err := os.ReadFile(filepath.Join(cacheDir, childNS, "manifest.json"))
+		require.NoError(t, err)
+		assert.Contains(t, string(manBytes), parentNS,
+			"top-level manifest must record the ancestor chain for offline reload")
 	})
 }
