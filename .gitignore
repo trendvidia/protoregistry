@@ -5,6 +5,11 @@
 *.dylib
 client-sdk
 client-grpc
+# `go build ./...` from the repo root drops a `protoregistry` binary
+# here (the cmd/protoregistry package output). Leading `/` anchors the
+# pattern to the repo root so cmd/protoregistry and proto/protoregistry
+# (which are source dirs) aren't matched.
+/protoregistry
 
 # Test binary
 *.test
