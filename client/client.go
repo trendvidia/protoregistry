@@ -431,6 +431,63 @@ func (r *Resolver) NewMessage(name protoreflect.FullName) (*dynamicpb.Message, e
 	return dynamicpb.NewMessage(mt.Descriptor()), nil
 }
 
+// RangeMessages iterates every message type currently visible to the
+// Resolver — both the bound namespace's own types and types
+// contributed by parent registries. f is invoked once per type;
+// returning false stops the walk.
+//
+// Tiers walked:
+//   - The bound namespace's nsTypes (always).
+//   - When [WithServerChain] was used: each ancestor's nsTypes, in
+//     chain order (nearest first).
+//   - When [WithParent] / [WithFallback] / [WithGlobalFallback] was
+//     used without WithServerChain: the single parent tier supplied
+//     at construction. Recursive multi-tier walking through ad-hoc
+//     parents isn't supported — WithServerChain is the way to enumerate
+//     a full org hierarchy.
+//
+// f may be called with the same FQN twice if two tiers both export it
+// (a child intentionally shadowing a parent). Consumers building a
+// deduplicated list should track names as they observe them.
+//
+// Useful for editor integrations populating a completion list of
+// known message FQNs (e.g. for the `@type` directive in a PXF
+// document). The walk runs against the resolver's current snapshot;
+// concurrent refreshes do not introduce torn views.
+func (r *Resolver) RangeMessages(f func(protoreflect.MessageType) bool) {
+	if r == nil {
+		return
+	}
+	cont := true
+	walk := func(types *protoregistry.NamespacedTypes) {
+		if !cont || types == nil {
+			return
+		}
+		types.RangeMessages(func(mt protoreflect.MessageType) bool {
+			if !f(mt) {
+				cont = false
+				return false
+			}
+			return true
+		})
+	}
+
+	walk(r.nsTypes)
+	// WithServerChain wires explicit ancestor Resolvers; iterate them
+	// in chain order (nearest first).
+	for _, a := range r.ancestors {
+		walk(a.nsTypes)
+	}
+	// WithParent / WithFallback / WithGlobalFallback set a single
+	// parent tier via cfg.parentTypes. Walk it when WithServerChain
+	// isn't in play — when it is, the ancestor walk above already
+	// covers the same ground (the nearest ancestor's nsTypes IS
+	// cfg.parentTypes).
+	if len(r.ancestors) == 0 {
+		walk(r.cfg.parentTypes)
+	}
+}
+
 // --- SchemaResolver ---
 
 // FindMessageByName looks up a message type within the bound schema.

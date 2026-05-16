@@ -358,4 +358,55 @@ message Invoice {
 		_, err = r.FindMessageByName("billing.Config")
 		require.NoError(t, err)
 	})
+
+	t.Run("RangeMessages_EnumeratesAllVisibleTypes", func(t *testing.T) {
+		// RangeMessages must yield every message type the Resolver can
+		// resolve — both the bound namespace's own types and any
+		// inherited via the parent/fallback chain. Useful for editor
+		// integrations that populate completion lists of known FQNs.
+		srv.PublishAndPromote(t, "rangemsg-shared", "commons", map[string][]byte{
+			"shared.proto": []byte(`syntax = "proto3"; package shared; message Money { string currency = 1; }`),
+		})
+		parent, err := client.New(t.Context(), srv.Conn, "rangemsg-shared", client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = parent.Close() })
+
+		srv.PublishAndPromote(t, "rangemsg-billing", "invoice", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		child, err := client.New(t.Context(), srv.Conn, "rangemsg-billing",
+			client.WithRefreshInterval(0),
+			client.WithParent(parent),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = child.Close() })
+
+		seen := map[protoreflect.FullName]bool{}
+		child.RangeMessages(func(mt protoreflect.MessageType) bool {
+			seen[mt.Descriptor().FullName()] = true
+			return true
+		})
+
+		require.True(t, seen["billing.Config"], "child's own type must be enumerated")
+		require.True(t, seen["shared.Money"], "parent type must surface through the fallback chain")
+	})
+
+	t.Run("RangeMessages_StopsOnFalse", func(t *testing.T) {
+		// The contract for RangeXxx callbacks: returning false halts
+		// iteration. The walker shouldn't invoke the callback again
+		// after that.
+		srv.PublishAndPromote(t, "rangemsg-halt", "billing", map[string][]byte{
+			"billing.proto": []byte(billingV1),
+		})
+		r, err := client.New(t.Context(), srv.Conn, "rangemsg-halt", client.WithRefreshInterval(0))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close() })
+
+		calls := 0
+		r.RangeMessages(func(_ protoreflect.MessageType) bool {
+			calls++
+			return false
+		})
+		require.Equal(t, 1, calls, "RangeMessages must stop after the callback returns false")
+	})
 }
