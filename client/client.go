@@ -544,6 +544,96 @@ func (r *Resolver) FindFileByPathWithOrigin(path string) (protoreflect.FileDescr
 	return nil, "", protoregistry.NotFound
 }
 
+// GetSource fetches the original .proto source bytes for the given
+// file path. The path matches what a [protoreflect.FileDescriptor]
+// reports via Path() — relative within the schema (e.g.
+// "acme/billing/v1/invoice.proto").
+//
+// Resolution walks the same tiers as [Resolver.FindFileByPathWithOrigin]:
+//   - Bound namespace's schemas first.
+//   - With [WithServerChain]: each ancestor's schemas, nearest first.
+//
+// [WithParent] / [WithFallback] / [WithGlobalFallback] tiers expose
+// only pre-compiled registries, not a registry connection — files
+// reachable only through such ad-hoc parents resolve via
+// FindFileByPath but return NotFound from GetSource. Use
+// WithServerChain to get source-fetch coverage across the whole
+// org's chain.
+//
+// The fetched version matches the currently-loaded snapshot — for a
+// pinned Resolver, the pin's version; for a live one, the latest
+// observed. The server is hit on every call; the client does not
+// cache source bytes. Editor integrations should cache at their
+// layer, keyed by the FileDescriptor's identity.
+//
+// Useful for editor integrations building virtual documents for
+// registry-only files: when go-to-definition resolves to a file
+// that doesn't exist on disk, the editor fetches its bytes here.
+func (r *Resolver) GetSource(ctx context.Context, filePath string) ([]byte, error) {
+	if r == nil {
+		return nil, protoregistry.NotFound
+	}
+	if content, ok, err := r.fetchOwnSource(ctx, filePath); err != nil {
+		return nil, err
+	} else if ok {
+		return content, nil
+	}
+	for _, a := range r.ancestors {
+		if content, ok, err := a.fetchOwnSource(ctx, filePath); err != nil {
+			return nil, err
+		} else if ok {
+			return content, nil
+		}
+	}
+	return nil, protoregistry.NotFound
+}
+
+// fetchOwnSource locates filePath among the Resolver's own local
+// schemas (no ancestor walk) and fetches its source bytes via the
+// gRPC GetSource RPC. Returns (nil, false, nil) when the path isn't
+// in any local schema, (content, true, nil) on success, and a
+// non-nil error only when the server lookup itself fails.
+//
+// Cross-schema duplicate paths (rare; the registry should prevent
+// them) resolve to whichever schema is encountered first — which
+// may differ from [FindFileByPath]'s last-write-wins. Documenting
+// rather than fixing: deduplication belongs at publish time.
+func (r *Resolver) fetchOwnSource(ctx context.Context, filePath string) ([]byte, bool, error) {
+	snap := r.snapshot.Load()
+	if snap == nil {
+		return nil, false, nil
+	}
+	var owner *schemaSnapshot
+	for _, ss := range snap.schemas {
+		for _, p := range ss.aggFingerprint.filePaths {
+			if p == filePath {
+				owner = ss
+				break
+			}
+		}
+		if owner != nil {
+			break
+		}
+	}
+	if owner == nil {
+		return nil, false, nil
+	}
+	resp, err := r.rpc.GetSource(ctx, &registrypb.GetSourceRequest{
+		NamespaceId: r.ns,
+		SchemaId:    owner.schemaID,
+		Version:     owner.version,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("get_source %s/%s@%d: %w", r.ns, owner.schemaID, owner.version, err)
+	}
+	content, ok := resp.Sources[filePath]
+	if !ok {
+		return nil, false, fmt.Errorf("server returned schema %s/%s@%d sources without %q: %w",
+			r.ns, owner.schemaID, owner.version, filePath, protoregistry.NotFound)
+	}
+	return content, true, nil
+}
+
 // findLocalMessage scans only types registered directly on t (no
 // parent-chain walk) for the given full name. nsTypes.RangeMessages
 // is local-only by design — the parent-walking lookup methods don't
