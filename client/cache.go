@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -389,8 +390,12 @@ var ErrStaleResolver = errors.New("protoregistry/client: resolver loaded from di
 // Resolver. Pulled out of [Dial] so the cache-fallback wrapper can
 // distinguish "online attempt failed" from "everything failed."
 func dialOnline(ctx context.Context, addr, namespace string, cfg config, opts []Option) (*Resolver, error) {
+	creds := credentials.TransportCredentials(insecure.NewCredentials())
+	if cfg.transportCreds != nil {
+		creds = cfg.transportCreds
+	}
 	dialOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 	}
 	if cfg.token != "" {
 		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(bearerCreds{token: cfg.token}))

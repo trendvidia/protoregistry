@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
@@ -754,6 +755,13 @@ type config struct {
 	logger  *slog.Logger
 	token   string // only honored by Dial; New callers configure auth on the conn
 
+	// transportCreds, when non-nil, replaces Dial's default
+	// insecure.NewCredentials() with the supplied gRPC transport
+	// credentials. Only honored by Dial; New callers configure
+	// credentials on the *grpc.ClientConn directly. See
+	// [WithTransportCredentials].
+	transportCreds credentials.TransportCredentials
+
 	// useServerChain, when true, makes New consult GetNamespaceChain on
 	// startup and construct ancestor resolvers automatically, wiring the
 	// nearest ancestor's nsFiles/nsTypes as parentFiles/parentTypes.
@@ -816,6 +824,21 @@ func WithLogger(l *slog.Logger) Option {
 // is more flexible and idiomatic.
 func WithToken(token string) Option {
 	return func(c *config) { c.token = token }
+}
+
+// WithTransportCredentials supplies gRPC transport credentials for
+// [Dial]. The default — no option set — is insecure transport, fine
+// for loopback / local development and never appropriate for traffic
+// that leaves the host. Production callers pass
+// credentials.NewTLS(tlsCfg) (or any other TransportCredentials
+// implementation) to enable TLS while preserving Dial's
+// cache-fallback behavior on the failure path.
+//
+// Only honored by [Dial]. Callers of [New] own the *grpc.ClientConn
+// and configure credentials on it directly — this option is ignored
+// in that path.
+func WithTransportCredentials(creds credentials.TransportCredentials) Option {
+	return func(c *config) { c.transportCreds = creds }
 }
 
 // WithFallback configures parent registries that the Resolver falls

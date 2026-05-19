@@ -5,11 +5,13 @@ package client_test
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -45,6 +47,30 @@ func TestNew_EmptyNamespace(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "empty namespace") {
 		t.Fatalf("New(empty namespace): got %v, want empty-namespace error", err)
 	}
+}
+
+// TestWithTransportCredentials_OptionIsAccepted is a smoke test for
+// the new Dial-side TLS option. It doesn't stand up a TLS server —
+// the integration suite (TestIntegration) covers end-to-end Dial
+// against a real backend with insecure creds. This test just guards
+// against regressions where the option's signature drifts away from
+// the credentials.TransportCredentials interface or the option fails
+// to type-check against the public Option type.
+func TestWithTransportCredentials_OptionIsAccepted(t *testing.T) {
+	tlsCreds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
+	opt := client.WithTransportCredentials(tlsCreds)
+	if opt == nil {
+		t.Fatal("WithTransportCredentials returned a nil Option")
+	}
+	// The option being a *client.Option (a function type) means we
+	// can't observe its effect without dialing — but the type
+	// alignment alone is the public contract callers depend on.
+	acceptOption(opt)
+}
+
+// acceptOption is a no-op helper whose parameter type pins the
+// return type of WithTransportCredentials at compile time.
+func acceptOption(_ client.Option) {
 }
 
 func TestPin_Empty(t *testing.T) {
