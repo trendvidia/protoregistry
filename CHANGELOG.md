@@ -9,6 +9,29 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.72.0] - 2026-05-19
+
+Small additive release: TLS transport credentials for `Dial`.
+Enables protolsp and other clients to dial registries across
+networks while preserving `Dial`'s cache-fallback behavior on the
+failure path. No client breakage.
+
+### Added — client
+
+- **`client.WithTransportCredentials(creds)`** (#16): supply gRPC
+  transport credentials for `Dial`, replacing the hard-coded
+  `insecure.NewCredentials()` that has been the only behavior since
+  the package shipped. Default unchanged (no option set ⇒ insecure
+  transport, fine for loopback / docker-compose). Production callers
+  pass `credentials.NewTLS(tlsCfg)` to enable TLS while keeping the
+  cache-fallback path on `Dial` failure. Callers using `New` are
+  unaffected — they own the `*grpc.ClientConn` and configure
+  credentials there directly, as before.
+
+### Chores
+
+- Gitignore the `protoregistry` binary at the repo root (#15).
+
 ## [0.71.0] - 2026-05-16
 
 Substantial feature release covering server-side namespace
