@@ -59,18 +59,25 @@ jobs:
           # uses the same path as the GitHub repo so this works
           # without further mapping.
           images: ghcr.io/${{ github.repository }}
+          # Semver rules use the workflow_dispatch input when
+          # supplied, otherwise fall back to github.ref. Without
+          # the override, workflow_dispatch checked out from a
+          # tag still sees github.ref=refs/heads/main and the
+          # semver expansion silently no-ops. Tested by triggering
+          # backfills against past tags.
           tags: |
-            # On a tag push (e.g., refs/tags/v0.72.0):
+            # Tag-push or workflow_dispatch(ref=v*) → versioned tags:
             #   - "v0.72.0" (full semver)
             #   - "0.72" (major.minor — moves forward on each patch)
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ inputs.ref || github.ref }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.ref || github.ref }}
             # On main: "main" rolling tag.
             type=ref,event=branch
-            # `latest` only on the default branch's tag pushes —
-            # never on main (so a green main can't accidentally
-            # overwrite the latest release pointer).
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && github.event.base_ref == 'refs/heads/main' }}
+            # `latest` on tag pushes from the default branch OR
+            # any workflow_dispatch with a v-prefixed ref input.
+            # Never fires from a plain push-to-main so a green
+            # main can't overwrite the latest release pointer.
+            type=raw,value=latest,enable=${{ (github.ref_type == 'tag' && github.event.base_ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.ref, 'v')) }}
 
       - name: Build + push
         uses: docker/build-push-action@v5
