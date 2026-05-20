@@ -53,7 +53,7 @@ jobs:
 
       - name: Compute tags + labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           # github.repository is "trendvidia/protoregistry" — ghcr
           # uses the same path as the GitHub repo so this works
