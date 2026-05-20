@@ -60,17 +60,18 @@ jobs:
           # without further mapping.
           images: ghcr.io/${{ github.repository }}
           # Semver rules use the workflow_dispatch input when
-          # supplied, otherwise fall back to github.ref. Without
-          # the override, workflow_dispatch checked out from a
-          # tag still sees github.ref=refs/heads/main and the
-          # semver expansion silently no-ops. Tested by triggering
-          # backfills against past tags.
+          # supplied, otherwise fall back to github.ref_name (NOT
+          # github.ref — the full refs/tags/v0.72.0 path doesn't
+          # parse as semver). Two lessons baked in: #19 (dispatched
+          # builds silently no-op semver expansion without the
+          # override) and golias's v0.1.0 incident (github.ref vs
+          # ref_name).
           tags: |
             # Tag-push or workflow_dispatch(ref=v*) → versioned tags:
             #   - "v0.72.0" (full semver)
             #   - "0.72" (major.minor — moves forward on each patch)
-            type=semver,pattern={{version}},value=${{ inputs.ref || github.ref }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.ref || github.ref }}
+            type=semver,pattern={{version}},value=${{ inputs.ref || github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.ref || github.ref_name }}
             # On main: "main" rolling tag.
             type=ref,event=branch
             # `latest` on tag pushes from the default branch OR
