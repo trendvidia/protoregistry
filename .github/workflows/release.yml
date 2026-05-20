@@ -81,7 +81,7 @@ jobs:
             type=raw,value=latest,enable=${{ (github.ref_type == 'tag' && github.event.base_ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.ref, 'v')) }}
 
       - name: Build + push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
