@@ -75,7 +75,7 @@ func rfc001Fixtures(t *testing.T) map[string]map[string][]byte {
 		case strings.HasPrefix(rel, "06_"):
 			group = "06_cross_file"
 		}
-		src, err := os.ReadFile(p) // #nosec G304 -- walked under testdata/
+		src, err := os.ReadFile(p) // #nosec G304,G122 -- testdata/ walked by the test itself
 		if err != nil {
 			return err
 		}
