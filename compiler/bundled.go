@@ -13,12 +13,15 @@ import (
 
 // bundledImports are the canonical protowire schemas every namespace can
 // import without publishing them, by import path, with their place in
-// protowire.BundledProto. An RFC-001 schema (Protowire Schema Extensions)
-// imports protowire/schema/v1/annotations.proto for the standard
-// annotations; without it here, such a schema would compile only after an
-// operator published the file to __builtins__.
+// protowire.BundledProto. Without them here, a schema importing one would
+// compile only after an operator published it to __builtins__.
+//   - protowire/schema/v1/annotations.proto: the standard annotations an
+//     RFC-001 schema (Protowire Schema Extensions) uses.
+//   - pxf/annotations.proto: the PXF field options (pxf.required),
+//     (pxf.default) and (pxf.key).
 var bundledImports = map[string]string{
 	"protowire/schema/v1/annotations.proto": "proto/schema/v1/annotations.proto",
+	"pxf/annotations.proto":                 "proto/pxf/annotations.proto",
 }
 
 // bundledResolver serves bundledImports from the protowire module's
