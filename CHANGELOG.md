@@ -9,6 +9,15 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.73.0] - 2026-10-29
+
+Schemas written with RFC-001 syntax (Protowire Schema Extensions) now
+publish, with no setup. The registry compiles with the trendvidia/protocompile
+fork, stores the RFC-001 carriers unchanged, and bundles the two protowire
+schemas such schemas import. The gRPC API is published to the Buf Schema
+Registry, and the server ships as a container image on GHCR. Source hashes
+are unchanged, and the client API has no changes.
+
 ### Added
 
 - **Two protowire schemas are bundled** (#33):
@@ -21,6 +30,14 @@ version — see [`STABILITY.md`](STABILITY.md).
   before Google's well-known types. The copies come from the
   `github.com/trendvidia/protowire` module (v1.13.0), which raises grpc to
   v1.84.0 and golang.org/x/net to v0.58.0 through its requirements.
+- **The gRPC API is on the Buf Schema Registry** as
+  [`buf.build/trendvidia/protoregistry`](https://buf.build/trendvidia/protoregistry)
+  (#37), pushed on each release tag and labelled with it. A client in any
+  language can generate its stubs from there; the README's gRPC API section
+  shows the `deps` entry and the managed-mode setting Go clients need.
+- **Container image on GHCR**: `ghcr.io/trendvidia/protoregistry`, built for
+  `linux/amd64` and `linux/arm64` (#18, #19, #20). A release tag publishes
+  `vX.Y.Z`, `X.Y` and `latest`; `main` publishes a rolling `main` tag.
 
 ### Changed
 
@@ -41,6 +58,12 @@ version — see [`STABILITY.md`](STABILITY.md).
     before too.
 - **protowire-go v1.0.0 → v1.12.0** (used by `protoregistry ctl` for PXF
   output).
+
+### Chores
+
+- Dependency upgrades: grpc to v1.84.0 (#26, #30, and through protowire),
+  pgx v5.10.0 (#27), testcontainers v0.43.0 (#29); GitHub Actions
+  `actions/checkout` v7 and the Docker build actions (#21–#25, #28).
 
 ## [0.72.0] - 2026-05-19
 
