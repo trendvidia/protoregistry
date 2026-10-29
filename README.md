@@ -320,6 +320,40 @@ The `RegistryService` exposes the full lifecycle over gRPC:
 
 See [`proto/protoregistry/v1/registry.proto`](proto/protoregistry/v1/registry.proto) for the full definition.
 
+### From the Buf Schema Registry
+
+The API is published as the
+[BSR module `buf.build/trendvidia/protoregistry`](https://buf.build/trendvidia/protoregistry),
+so a client in any language can generate its stubs without this repository:
+
+```yaml
+# buf.yaml
+version: v2
+deps:
+  - buf.build/trendvidia/protoregistry
+```
+
+Each release is pushed under its version tag (for example
+`buf.build/trendvidia/protoregistry:v0.73.0`). Pin the same version as
+the server you talk to.
+
+Go clients should import this module's own package,
+`github.com/trendvidia/protoregistry/proto/protoregistry/v1`, rather than
+generate `registry.proto` again: a second Go copy registers the same
+`protoregistry.v1` names, which protobuf-go reports as a registration
+conflict. If your own `.proto` files
+import `registry.proto` and you use managed mode's `go_package_prefix`,
+disable it for this module so the generated code imports that package:
+
+```yaml
+# buf.gen.yaml
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/trendvidia/protoregistry
+```
+
 ## Type Resolution
 
 The `resolve` package bridges namespace snapshots with protobuf-go's standard resolver interfaces:
