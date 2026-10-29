@@ -17,8 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bufbuild/protocompile"
-	"github.com/bufbuild/protocompile/linker"
+	"github.com/trendvidia/protocompile"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -252,11 +251,7 @@ func (c *Compiler) Compile(
 			addFile(imports.Get(i).FileDescriptor)
 		}
 		fileDescriptors = append(fileDescriptors, fd)
-		if lr, ok := fd.(linker.Result); ok {
-			fds.File = append(fds.File, lr.FileDescriptorProto())
-		} else {
-			fds.File = append(fds.File, protodesc.ToFileDescriptorProto(fd))
-		}
+		fds.File = append(fds.File, protodesc.ToFileDescriptorProto(fd))
 	}
 	for _, file := range compiled {
 		addFile(file)
@@ -312,7 +307,7 @@ func Version() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range info.Deps {
 			switch dep.Path {
-			case "github.com/bufbuild/protocompile":
+			case "github.com/trendvidia/protocompile":
 				protocompileVersion = dep.Version
 			case "google.golang.org/protobuf":
 				protobufVersion = dep.Version
