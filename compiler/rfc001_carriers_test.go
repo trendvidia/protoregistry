@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trendvidia/protocompile"
+	protowireschemas "github.com/trendvidia/protowire"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -37,19 +38,15 @@ const (
 	carrierSourceMap      = 1331
 )
 
-// rfc001Builtins are the files an RFC-001 schema imports that protoregistry
-// does not bundle: protowire's annotations.proto, and the legacy
-// pxf/annotations.proto one fixture uses. A namespace supplies them through
-// __builtins__.
+// rfc001Builtins is the file one fixture imports that protoregistry does
+// not bundle: the legacy pxf/annotations.proto. A namespace supplies it
+// through __builtins__. protowire/schema/v1/annotations.proto is bundled.
 func rfc001Builtins(t *testing.T) []DepSource {
 	t.Helper()
-	var out []DepSource
-	for _, name := range []string{"protowire/schema/v1/annotations.proto", "pxf/annotations.proto"} {
-		b, err := os.ReadFile(filepath.Join("testdata/protowire-builtins", name)) // #nosec G304 -- fixed testdata path
-		require.NoError(t, err)
-		out = append(out, DepSource{Namespace: "__builtins__", SchemaID: "protowire", Version: 1, Filename: name, Source: b})
-	}
-	return out
+	const name = "pxf/annotations.proto"
+	b, err := os.ReadFile(filepath.Join("testdata/protowire-builtins", name)) // #nosec G304 -- fixed testdata path
+	require.NoError(t, err)
+	return []DepSource{{Namespace: "__builtins__", SchemaID: "protowire", Version: 1, Filename: name, Source: b}}
 }
 
 // rfc001Fixtures reads protowire's testdata/schema-extensions, grouped into
@@ -144,6 +141,11 @@ func compileDirect(t *testing.T, sources map[string][]byte, builtins []DepSource
 	for _, b := range builtins {
 		files[b.Filename] = b.Source
 	}
+	for path, embedded := range bundledImports {
+		src, err := fs.ReadFile(protowireschemas.BundledProto, embedded)
+		require.NoError(t, err)
+		files[path] = src
+	}
 	resolver := protocompile.WithStandardImports(protocompile.ResolverFunc(func(path string) (protocompile.SearchResult, error) {
 		if src, ok := files[path]; ok {
 			return protocompile.SearchResult{Source: bytes.NewReader(src)}, nil
@@ -163,7 +165,9 @@ func compileDirect(t *testing.T, sources map[string][]byte, builtins []DepSource
 	return out
 }
 
-// A schema using RFC-001 syntax publishes, and the carriers the compiler
+// A schema using RFC-001 syntax publishes with no setup (its
+// protowire/schema/v1/annotations.proto import resolves from the bundled
+// copy), and the carriers the compiler
 // emits survive storage unchanged: the stored descriptors equal what the
 // toolchain alone produces, byte for byte, and they come back byte-identical
 // through both read paths — snapshot.New (Restore) and the GetDescriptor
@@ -231,4 +235,38 @@ func TestCompile_RFC001CarriersRoundTrip(t *testing.T) {
 	for _, n := range []protowire.Number{carrierAnnotations, carrierFunctions, carrierAnnotationDecl, carrierTypeDecls, carrierSourceMap} {
 		assert.True(t, seen[n], "no fixture exercised carrier field %d", n)
 	}
+}
+
+// The bundled annotations.proto is enough on its own: an RFC-001 schema
+// compiles with nothing in __builtins__.
+func TestCompile_BundledProtowireAnnotations(t *testing.T) {
+	src, err := os.ReadFile("testdata/schema-extensions/01_basic.proto")
+	require.NoError(t, err)
+	res, err := New().Compile(context.Background(), 1, map[string][]byte{"01_basic.proto": src}, nil, nil, nil)
+	require.NoError(t, err)
+	stored := &descriptorpb.FileDescriptorSet{}
+	require.NoError(t, proto.Unmarshal(res.Compiled, stored))
+	var names []string
+	for _, f := range stored.GetFile() {
+		names = append(names, f.GetName())
+		if f.GetName() == "01_basic.proto" {
+			assert.NotEmpty(t, carriers(t, f))
+		}
+	}
+	assert.Contains(t, names, "protowire/schema/v1/annotations.proto", "the bundled file is stored with the schema, like any import")
+}
+
+// An operator's copy in __builtins__ wins over the bundled one. Here the
+// builtins copy declares nothing, so a schema using @validate no longer
+// compiles: proof that the bundled copy was not consulted.
+func TestCompile_BuiltinsOverrideBundledAnnotations(t *testing.T) {
+	src, err := os.ReadFile("testdata/schema-extensions/01_basic.proto")
+	require.NoError(t, err)
+	empty := DepSource{
+		Namespace: "__builtins__", SchemaID: "protowire", Version: 1,
+		Filename: "protowire/schema/v1/annotations.proto",
+		Source:   []byte("syntax = \"proto3\";\npackage protowire.schema.v1;\n"),
+	}
+	_, err = New().Compile(context.Background(), 1, map[string][]byte{"01_basic.proto": src}, nil, nil, []DepSource{empty})
+	require.Error(t, err)
 }

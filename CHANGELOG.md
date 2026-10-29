@@ -9,6 +9,18 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+### Added
+
+- **`protowire/schema/v1/annotations.proto` is bundled** (#33). Every
+  schema using RFC-001 syntax imports it, so such a schema now publishes
+  with no setup. It used to fail with "imported file does not exist"
+  until an operator published the file to `__builtins__`. It resolves
+  after `__builtins__` (an operator's own copy still wins) and before
+  Google's well-known types. The copy comes from the
+  `github.com/trendvidia/protowire` module (v1.12.0), which raises
+  grpc to v1.83.2 and golang.org/x/net to v0.58.0 through its
+  requirements.
+
 ### Changed
 
 - **Schemas are compiled with the trendvidia/protocompile fork**
@@ -19,8 +31,8 @@ version — see [`STABILITY.md`](STABILITY.md).
   1327–1331) and protoregistry stores them unchanged: the stored
   descriptors equal what the toolchain alone produces, byte for byte, and
   they come back byte-identical through `Restore` and `GetDescriptor`.
-  The schema's `import "protowire/schema/v1/annotations.proto"` must
-  resolve, so publish that file to `__builtins__`.
+  The schema's `import "protowire/schema/v1/annotations.proto"` resolves
+  from the bundled copy (see Added).
   - Source hashes (deduplication and change detection) are unchanged: of
     1,227 distinct `.proto` files, every one that both parsers accept
     hashes the same. Fourteen proto2 files with unlabelled fields are now
