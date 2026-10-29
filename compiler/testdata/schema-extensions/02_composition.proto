@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 02_composition
+// Exercises: three-level type chain; pure-AND composition; type-chain
+// preservation in the source map.
+//
+// Expected behavior:
+//   - The `email` field carries three @validate annotations in
+//     base-to-derived order: matches → ends_with("@acme.com") →
+//     ends_with(".internal").
+//   - The source map records the chain
+//     [string, fixtures.compose.Email, fixtures.compose.CompanyEmail,
+//      fixtures.compose.InternalEmail] for every Violation produced by
+//     these rules.
+//   - Each TYPE_REFINEMENT source-entry preserves the declaration site
+//     of the alias that produced it.
+
+syntax = "proto3";
+
+package fixtures.compose;
+
+import "protowire/schema/v1/annotations.proto";
+
+function matches(value: string, pattern: string);
+function ends_with(value: string, suffix: string);
+
+type Email = string
+  @validate(matches(this, "^[^@]+@[^@]+$"));
+
+type CompanyEmail = Email
+  @validate(ends_with(this, "@acme.com"));
+
+type InternalEmail = CompanyEmail
+  @validate(ends_with(this, ".internal"));
+
+message Employee {
+  // Three rules expand here in base-to-derived order at lowering time.
+  InternalEmail email = 1;
+}

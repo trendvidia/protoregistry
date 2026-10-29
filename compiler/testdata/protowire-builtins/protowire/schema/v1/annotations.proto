@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Protowire Schema Extensions — canonical annotation library.
+//
+// IMPORTANT: This file uses v1.2 schema-extension grammar (the `annotation`
+// keyword and the `@`-sigil use sites). It REQUIRES a v1.2-compliant parser
+// to load. v1.1 (and earlier) ports MUST NOT attempt to compile this file;
+// they will fail at the first `annotation` keyword.
+//
+// Stock `protoc` and any v1.1 protowire port also cannot parse this file.
+// The file exists in the repository as the canonical declaration source —
+// the source of truth for what `@validate`, `@required`, etc. mean at the
+// language level. The descriptor-level lowering targets these annotations
+// produce live in the sibling file `descriptor.proto`, which is stock
+// proto3 and parseable by any tool.
+//
+// Per the M0 milestone in docs/RFC-001-issues.md (#004), this file lands
+// in the repository for spec-text purposes and becomes loadable once the
+// reference `protocompile` parser ships v1.2 grammar support (issue #030).
+//
+// For the design context, see docs/RFC-001-schema-extensions.md §5.2.
+
+syntax = "proto3";
+
+package protowire.schema.v1;
+
+// validate — attach a validation rule to a type, field, or message.
+//
+// `rule` is an expression in the one language RFC-001 section 5.4 defines,
+// the same for every engine: comparisons, `in`, `&&` `||` `!`, literals,
+// `this`, the builtins size / starts_with / ends_with / contains / matches
+// / now, and calls to declared functions. A misspelled function or
+// builtin is a compile error.
+// `code` is an optional stable identifier used by the i18n catalog and by
+// programmatic error consumers.
+// `message` is an optional fallback message used when no catalog entry
+// matches the code.
+//
+// When called from a `type` declaration, `this` inside `rule` binds to:
+//   - the unwrapped scalar value, for wrapper-based types;
+//   - the message instance, for message-based types;
+//   - the primitive value, for primitive- and enum-based types.
+// When called at a message-level annotation, `this` binds to the message.
+annotation validate(
+  rule: expression,
+  code: string = "",
+  message: string = ""
+);
+
+// required — declare that a field MUST be present.
+//
+// Validation runs the field's rules only when it is set; absence with
+// @required produces a Violation with code "required" in a layer prior
+// to rule evaluation. Null (for wrapper / optional fields) counts as
+// present.
+//
+// Equivalent in effect to the bracket-form `[(pxf.required) = true]`
+// retained from protowire v1.0.
+annotation required;
+
+// default — substitute `value` when the field is absent.
+//
+// The default is applied only on absence; null fields are not replaced.
+// After substitution, the field's validation rules are evaluated against
+// the substituted value. Best practice: the default should itself pass
+// the field's validation rules; tooling MAY check this at compile time.
+// A rule that fails against the substituted value is reported with
+// rule_kind RULE_KIND_DEFAULT — a schema-authoring error, not an
+// instance error (RFC-001 §6.4).
+//
+// Equivalent in effect to the bracket-form `[(pxf.default) = "..."]`
+// retained from protowire v1.0.
+annotation default(value: any);
+
+// description — human-readable description.
+//
+// Surfaces in generated documentation (OpenAPI, JSON Schema, IDE hover,
+// etc.). Does not influence runtime validation.
+annotation description(text: string);
+
+// example — example value.
+//
+// Surfaces as documentation (e.g., OpenAPI schema example). Tooling MAY
+// also run it as an executable test fixture: an example with
+// `expect = "pass"` MUST validate; with `expect = "fail"` MUST produce
+// a Violation. The `expect` arg is optional; if absent, the example is
+// documentation only.
+annotation example(value: any);
+
+// error_code — override the stable code emitted on validation failure.
+//
+// Attaches at the same site as the rule it modifies; the engine emits
+// this code instead of the rule's default.
+annotation error_code(code: string);
+
+// deprecated — mark a declaration as deprecated.
+//
+// `reason` is optional; tooling renders it where deprecation notices
+// surface (IDE warnings, generated-code comments, doc emit).
+annotation deprecated(reason: string = "");
+
+// sensitive — classify a declaration's value as sensitive material
+// (credentials, tokens, personal data).
+//
+// Classification, not protection: wire encoding, storage, programmatic
+// access, and validation semantics are unaffected. Surfaces that render
+// field values for human or log consumption MUST redact to "[REDACTED]",
+// engines MUST withhold offending values from validation reports, and
+// doc generators MUST NOT emit values or examples (RFC-001 §6.7).
+// Encryption-at-rest and key management remain PXF/chameleon-layer
+// concerns; those layers MAY consume this classification to select
+// fields. Attaches to fields, type aliases (expands to consuming
+// fields), and messages (all fields, transitively through message-typed
+// fields).
+//
+// The optional class parameter names the sensitivity class the value
+// belongs to ("credentials", "pii", ...). The vocabulary is open and
+// org-defined; names beginning with "protowire." are reserved for
+// future spec-defined classes and MUST be rejected. "" means sensitive
+// but unclassified. A field's effective class is the class of the
+// nearest @sensitive that specifies one (field, then type-alias chain
+// most-derived first, then message) — a bare @sensitive reasserts
+// sensitivity without reclassifying. Every consumer minimum applies
+// identically to every class, including "": classes add routing
+// granularity (e.g. class -> key-domain mapping in protection layers),
+// never weaken the redaction floor (RFC-001 §6.7, issue #111).
+annotation sensitive(class: string = "");
+
+// http — attach HTTP routing and operation metadata to an RPC method.
+//
+// Used by OpenAPI / Swagger generators to produce REST-bound surface
+// descriptions, and by REST binders to serve the routes.
+//
+// `method` and `path` are the routing skeleton. `path` may carry `{…}`
+// template segments; each binds a field of the request message, named
+// from its top level as a dotted path (`{order_id}`, `{shelf.id}`) and
+// optionally constrained by a sub-path pattern (`{name=shelves/*}`).
+// Remaining fields bind to the query string (bodyless methods) or the
+// request body (RFC-001 §5.2, issues #173 and #217).
+//
+// The skeleton lowers twice: to the standard annotation carrier, and
+// to the `google.api.http` option on MethodOptions (field 72295728) —
+// `@http` is sugar over `google.api.http`, not a documentation-only
+// annotation. The two are complements, not alternatives: the carrier
+// keeps the operation metadata below, which HttpRule has no place for,
+// while the standard option is what off-the-shelf REST binders read
+// (connect vanguard, grpc-gateway, Envoy, buf's OpenAPI plugins). A
+// method that writes `option (google.api.http)` by hand keeps its own
+// rule; the compiler never adds a competing one (issue #213).
+//
+// Because the skeleton is lowered rather than merely carried, it is
+// checked. Each of these is a compile error, since each would reach an
+// image as a route no binder can serve (RFC-001 §5.2; fixtures in
+// testdata/schema-extensions/invalid/):
+//
+//   - a `{name}` segment that binds no field of the request message
+//   - a `{name}` segment that binds a repeated or map field
+//   - a path that is not absolute
+//   - a path whose `{` is never closed
+//   - an empty `method`
+//
+// A method may carry several @http — a versioned or aliased route for
+// one RPC. The first is the rule; the rest become `additional_bindings`
+// in source order, and each renders as its own operation.
+//
+// The remaining parameters are documentation metadata: they carry no
+// validation semantics, and a port that does not render REST surfaces
+// parses them like any other annotation and interprets nothing.
+//
+//   summary       one-line operation summary; falls back to the first
+//                 sentence of @description when empty
+//   operation_id  document-unique operation identifier; derived as
+//                 "<Service>_<Method>" when empty. The derivation is
+//                 unique only while a method has one @http: a method
+//                 with several (see above) MUST name its own on every
+//                 binding after the first, since the id becomes a
+//                 method name in generated clients and an index-derived
+//                 one would move when two annotations are reordered
+//   tags          list literal of grouping tags, e.g. ["orders"]
+//   security      list literal of security-scheme names; the scheme
+//                 *definitions* are generator configuration, never
+//                 schema content (the §9.4 config-out-of-descriptors
+//                 reasoning that also rejected @encrypted, issue #112)
+//
+// Responses are derived rather than authored: the success response from
+// the method's return type, error responses from @error_code plus
+// report.proto (RFC-001 §7). A `responses` parameter is deliberately
+// absent — see docs/RFC-001-issues.md §#080.
+//
+// Every added parameter is defaulted, so `@http("GET", "/orders")`
+// keeps its v1.2.0 meaning and existing schemas are untouched.
+annotation http(
+  method: string,
+  path: string,
+  summary: string = "",
+  operation_id: string = "",
+  tags: any = [],
+  security: any = []
+);

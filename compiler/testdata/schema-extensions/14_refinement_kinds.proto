@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 14_refinement_kinds
+// Exercises: type refinement over every value-shaped base kind (§6.3,
+// issue #68) — enum refinement, wrapper refinement (with a chained
+// derived alias), and message refinement — plus field-level rules
+// stacked atop an aliased field, and an alias consumed as a repeated
+// element type.
+//
+// Expected behavior:
+//   - `SettledStatus` (enum base): FileTypeDecls records base_type_fqn
+//     "fixtures.refine.OrderStatus"; `this` binds to the enum value.
+//     (TypeDecl.base_type_fqn is normatively FULLY QUALIFIED — the
+//     descriptor.proto contract — for every non-primitive base,
+//     including in-package references written bare in source;
+//     trendvidia/protocompile#121, fixed in v0.21.0.)
+//   - `DisplayName` (wrapper base): base_type_fqn
+//     "google.protobuf.StringValue"; `this` binds to the UNWRAPPED
+//     string when set (§6.2 rule 1); rules do not run when null.
+//   - `TrimmedName = DisplayName`: two-link chain atop a wrapper. The
+//     `label` field evaluates base → derived → field-level:
+//     DisplayName's rule, then TrimmedName's, then the use-site
+//     @validate — type_chain [google.protobuf.StringValue,
+//     fixtures.refine.DisplayName, fixtures.refine.TrimmedName].
+//   - `VerifiedAddress` (message base): base_type_fqn
+//     "fixtures.refine.Address"; `this` binds to the structured
+//     message (§6.2 rule 4).
+//   - `repeated VerifiedAddress warehouses`: containers hold aliased
+//     elements (only the alias TARGET is restricted to value-shaped
+//     kinds, §6.3); each element validates per the alias chain.
+
+syntax = "proto3";
+
+package fixtures.refine;
+
+import "google/protobuf/wrappers.proto";
+import "protowire/schema/v1/annotations.proto";
+
+function zip_matches_city(a: Address);
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  PLACED = 1;
+  SHIPPED = 2;
+  CANCELLED = 3;
+}
+
+message Address {
+  string city = 1;
+  string zip = 2;
+}
+
+// Enum refinement. §6.2 rule 6: `this` binds to the value's number and
+// the rule compares integers — SHIPPED = 2, CANCELLED = 3. §5.4 has no
+// enum-value reference (`OrderStatus.SHIPPED` is not a term); a
+// name-resolved spelling is a later-minor candidate (issue #324).
+type SettledStatus = OrderStatus
+  @validate(this == 2 || this == 3,
+            code = "refine.status.unsettled",
+            message = "order is not settled");
+
+// Wrapper refinement: `this` is the unwrapped string.
+type DisplayName = google.protobuf.StringValue
+  @validate(this.size() <= 64,
+            code = "refine.name.too_long",
+            message = "display name exceeds 64 characters");
+
+// Chained refinement atop a wrapper base.
+type TrimmedName = DisplayName
+  @validate(!this.starts_with(" "),
+            code = "refine.name.leading_space",
+            message = "display name starts with whitespace");
+
+// Message refinement: `this` is the structured Address.
+type VerifiedAddress = Address
+  @validate(zip_matches_city(this),
+            code = "refine.address.mismatch",
+            message = "zip does not match city");
+
+message Order {
+  SettledStatus status = 1;
+
+  // Field-level rule stacked atop the two-link wrapper chain:
+  // evaluation order is DisplayName → TrimmedName → this rule.
+  TrimmedName label = 2
+    @validate(this != "N/A",
+              code = "refine.label.placeholder",
+              message = "label must not be the placeholder");
+
+  VerifiedAddress ship_to = 3;
+
+  // Aliased element type inside a container.
+  repeated VerifiedAddress warehouses = 4;
+}

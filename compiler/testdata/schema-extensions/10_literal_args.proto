@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 10_literal_args
+// Exercises: non-scalar annotation arguments — a resolved enum-value
+// reference, a typed message literal, a homogeneous scalar list, and a
+// list of typed message literals — on `any`-typed annotation params
+// (§8.1 Literal lowering, issue #64; §5.1 source grammar, issue #102;
+// message-literal list elements: protowire#176,
+// trendvidia/protocompile#127).
+//
+// Expected behavior:
+//   - `@sample(OrderStatus.CANCELLED)` lowers to Literal.enum_value with
+//     enum_type "fixtures.literals.OrderStatus", value_name "CANCELLED",
+//     number 3 — resolved by the linker, never carried as a bare string.
+//   - `@sample(Money{currency: "USD", units: 5})` lowers to
+//     Literal.message: a google.protobuf.Any serialized at lowering. The
+//     explicit type name is REQUIRED because `sample`'s param is `any`;
+//     it resolves like any type reference (bare `Money` binds to
+//     fixtures.literals.Money).
+//   - `@allowed(["US", "CA", "GB"])` lowers to Literal.list with three
+//     string_value LiteralValue elements. Elements carry no names and can
+//     never be expressions; heterogeneous lists are compile errors.
+//   - `@samples([Money{...}, Money{...}])` lowers to Literal.list whose
+//     elements are LiteralValue.literal wrapping Literal.message — each
+//     element its own google.protobuf.Any serialized at lowering, exactly
+//     like the scalar message-literal case. The explicit type name is
+//     REQUIRED on every element under an `any`-typed param (§5.1 rule 1);
+//     the untyped form `[{...}]` MUST NOT compile — see
+//     invalid/untyped_list_element.proto. Nested lists compose:
+//     `[[Money{...}]]` is Literal.list inside LiteralValue.literal.
+
+syntax = "proto3";
+
+package fixtures.literals;
+
+// User-declared annotations with `any`-typed params, so the argument's
+// type is carried by the literal itself.
+annotation sample(value: any);
+annotation allowed(values: any);
+annotation samples(values: any);
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  PLACED = 1;
+  SHIPPED = 2;
+  CANCELLED = 3;
+}
+
+message Money {
+  string currency = 1;
+  int64 units = 2;
+}
+
+message Order {
+  // Enum-value reference argument: resolved at link time.
+  OrderStatus status = 1
+    @sample(OrderStatus.CANCELLED);
+
+  // Typed message-literal argument (§5.1): explicit type name plus
+  // braced, colon-separated field initializers.
+  Money total = 2
+    @sample(Money{currency: "USD", units: 5});
+
+  // Homogeneous list-literal argument.
+  string country = 3
+    @allowed(["US", "CA", "GB"]);
+
+  // List of typed message literals: homogeneous (every element a
+  // message literal), each element explicitly typed and serialized to
+  // its own Any at lowering.
+  repeated Money totals = 4
+    @samples([Money{currency: "USD", units: 5}, Money{currency: "EUR", units: 7}]);
+}
+
+// Numeric literals on `any` parameters lower by TYPE (§8.1, "Choosing the
+// member"): the type of the annotated element decides the member, never
+// the literal's spelling or magnitude; where there is no such type, the
+// literal's own spelling stands. Each field below pins one cell of that
+// rule (issue #262).
+message Numeric {
+  // A float-spelled literal on a double: double_value 1.5.
+  double ratio = 1 @sample(1.5);
+
+  // An integer-spelled literal on a double is CONVERTED: double_value 42,
+  // not int_value 42.
+  double count_as_double = 2 @sample(42);
+
+  // Past int64's range, on a double: double_value 1e19. The member is
+  // decided by the element, so the magnitude changes nothing.
+  double big = 3 @sample(1e19);
+
+  // An integer literal on an int64: int_value 42.
+  int64 units = 4 @sample(42);
+
+  // A negative literal on a sint32: int_value -7.
+  sint32 delta = 5 @sample(-7);
+
+  // A list on a repeated double: every element converted to the element
+  // type, so the integer-spelled 1 is double_value 1.
+  repeated double ratios = 6 @allowed([1, 2.5]);
+
+  // A list on a repeated int64: int_value elements.
+  repeated int64 counts = 7 @allowed([1, 2]);
+}
+
+// A message-level annotation has no element type to convert to, so the
+// literal's own spelling stands: 1e19 is double_value, 42 is int_value.
+@sample(1e19)
+message SpelledFloat {}
+
+@sample(42)
+message SpelledInt {}
