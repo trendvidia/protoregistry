@@ -9,6 +9,26 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+### Changed
+
+- **Schemas are compiled with the trendvidia/protocompile fork**
+  (v0.35.1, from `bufbuild/protocompile` v0.14.1), so a schema written
+  with RFC-001 syntax (Protowire Schema Extensions: annotations,
+  `function` and `type` declarations) publishes. The compiler lowers that
+  syntax into the carrier options (`protowire.schema.v1`, fields
+  1327–1331) and protoregistry stores them unchanged: the stored
+  descriptors equal what the toolchain alone produces, byte for byte, and
+  they come back byte-identical through `Restore` and `GetDescriptor`.
+  The schema's `import "protowire/schema/v1/annotations.proto"` must
+  resolve, so publish that file to `__builtins__`.
+  - Source hashes (deduplication and change detection) are unchanged: of
+    1,227 distinct `.proto` files, every one that both parsers accept
+    hashes the same. Fourteen proto2 files with unlabelled fields are now
+    rejected when parsed rather than when compiled; they were rejected
+    before too.
+- **protowire-go v1.0.0 → v1.12.0** (used by `protoregistry ctl` for PXF
+  output).
+
 ## [0.72.0] - 2026-05-19
 
 Small additive release: TLS transport credentials for `Dial`.

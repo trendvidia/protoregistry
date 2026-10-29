@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 13_declaration_shapes
+// Exercises: every remaining declaration shape of the three v1.2
+// constructs (issue #68) — paren-less and empty-paren annotation
+// declarations; annotation params of every §5.1 type (string, int32,
+// int64, float, double, bool, bytes, any, expression, and
+// qualified-ident enum/message types) with and without defaults,
+// including negative numeric defaults; zero-param and multi-param
+// functions; a function carrying both an option list and trailing
+// annotations; a bare type alias with no annotation list.
+//
+// Expected behavior:
+//   - Every `annotation` declaration lowers to a FileAnnotationDecls
+//     (1329) entry recording its params, param types, and defaults;
+//     `approved` (paren-less) and `flagged()` (empty list) both lower
+//     to a declaration with zero params.
+//   - `function feature_enabled` lowers with an empty param list;
+//     `in_range` with three. `is_iban` records its [error_code] option
+//     in FunctionDecl.options under the unqualified key "error_code".
+//     Its trailing @description/@deprecated annotations are legal
+//     surface (§5.1 places annotation lists trailing on functionDecl)
+//     and MUST be accepted by the parser; the §8.2 FunctionDecl carrier
+//     pins params, options, and location — declaration-site annotations
+//     have no carrier surface and documentation tooling reads them from
+//     source.
+//   - `type RawId = string;` (no annotation list) lowers to a
+//     FileTypeDecls (1330) entry contributing no rules at use sites.
+//   - Use sites: `@approved` (no parens), `@flagged()` (empty parens),
+//     `@retry` with every param defaulted, positional, named, and
+//     mixed positional-then-named argument lists, a negative integer
+//     argument, a bytes argument via strLit, a bare in-scope enum
+//     value reference (EnumLiteral, resolved), and message literals
+//     both with the optional leading type name and without it (the
+//     param declares a concrete message type, so the name may be
+//     omitted; if present it must resolve to exactly that type).
+
+syntax = "proto3";
+
+package fixtures.shapes;
+
+import "protowire/schema/v1/annotations.proto";
+
+// ── annotation declaration shapes ───────────────────────────────────
+
+// Marker, paren-less (same shape as the library's `annotation required;`).
+annotation approved;
+
+// Marker, explicit empty parameter list.
+annotation flagged();
+
+// Enum-typed param (qualified-ident annot-param-type).
+annotation severity(level: Severity);
+
+// Message-typed param (qualified-ident annot-param-type).
+annotation audit(meta: AuditMeta);
+
+// Scalar params with defaults; int32 + double + bool.
+annotation retry(max: int32 = 3, backoff: double = 1.5, jitter: bool = false);
+
+// int64 params, negative default.
+annotation window(min: int64 = -1, max: int64 = 86400);
+
+// bytes param (strLit serves bytes, proto default-value convention).
+annotation checksum(seed: bytes);
+
+// float param, no default.
+annotation weight(kg: float);
+
+// User-declared expression param — capture/classify identical to the
+// library's @validate(rule: ...).
+annotation guard(rule: expression);
+
+// ── supporting types ────────────────────────────────────────────────
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  LOW = 1;
+  HIGH = 2;
+}
+
+message AuditMeta {
+  string source = 1;
+  int64 revision = 2;
+}
+
+// ── function declaration shapes ─────────────────────────────────────
+
+// Zero-param predicate.
+function feature_enabled();
+
+// Multi-param.
+function in_range(value: int64, min: int64, max: int64);
+
+// Option list AND trailing annotation list on one declaration.
+function is_iban(value: string)
+  [error_code = "bank.iban.invalid"]
+  @description("true when value is a valid IBAN")
+  @deprecated(reason = "prefer is_iban_v2");
+
+// ── type declaration shapes ─────────────────────────────────────────
+
+// Bare alias: no annotation list, contributes no rules at use sites.
+type RawId = string;
+
+type Iban = string @validate(is_iban(this));
+
+// ── use sites ───────────────────────────────────────────────────────
+
+message Account {
+  // Marker uses: no parens vs. empty parens.
+  RawId id = 1 @approved @flagged();
+
+  Iban iban = 2;
+
+  // Bare in-scope enum-value reference; params fully defaulted (@retry
+  // with no parens); named args incl. a negative integer literal; an
+  // expression arg calling declared functions (both extracted into
+  // Expression.calls: in_range arity 3, feature_enabled arity 0).
+  int64 balance_cents = 3
+    @severity(HIGH)
+    @retry
+    @window(min = -100000)
+    @guard(in_range(this, -100000, 100000) || feature_enabled());
+
+  // Positional-then-named on one use site.
+  int64 retries = 4 @retry(5, jitter = true);
+
+  // bytes argument via string literal.
+  string blob = 5 @checksum("\x00\x01\xff");
+
+  // float argument.
+  double payload_kg = 6 @weight(0.25);
+
+  // Message literal WITH the optional leading type name (param type is
+  // concrete, so the name is optional but must match).
+  string source_a = 7 @audit(AuditMeta{source: "crm", revision: 7});
+
+  // Message literal WITHOUT the leading type name — typed by the
+  // param's declared message type.
+  string source_b = 8 @audit({source: "import", revision: 12});
+}

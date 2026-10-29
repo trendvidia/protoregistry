@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 05_error_overrides
+// Exercises: per-use-site error code and fallback message overrides on
+// @validate; default error code via [error_code = "..."] on a function
+// declaration; inline expressions with code overrides.
+//
+// Expected behavior:
+//   - A Violation produced by the @validate on `Email.this` carries
+//     code "users.email.format" (overridden at the use site), NOT the
+//     function's default code.
+//   - A Violation produced by the @validate on `country` carries code
+//     "users.country.invalid" (annotation-supplied).
+//   - When no use-site override exists and the function has no
+//     [error_code], the Violation carries an engine-synthesized code
+//     derived from the function FQN.
+
+syntax = "proto3";
+
+package fixtures.errors;
+
+import "protowire/schema/v1/annotations.proto";
+
+function matches(value: string, pattern: string)
+  [error_code = "common.matches.failed"];
+
+function is_e164(value: string);
+
+type Email = string
+  @validate(
+    matches(this, "^[^@]+@[^@]+$"),
+    code = "users.email.format",
+    message = "must be a valid email address"
+  );
+
+type PhoneNumber = string
+  @validate(is_e164(this));  // no overrides — engine-synthesized code
+
+message User {
+  Email email = 1;
+  PhoneNumber phone = 2;
+
+  string country = 3
+    @validate(
+      this in ["US", "CA", "GB"],
+      code = "users.country.invalid",
+      message = "country must be one of US, CA, GB"
+    );
+}

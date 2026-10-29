@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 06_cross_file_lib
+// Companion to 06_cross_file_main.proto.
+//
+// This file declares a small library of types, functions, and one user
+// annotation. 06_cross_file_main.proto imports it and consumes each.
+//
+// Expected behavior:
+//   - All three declaration kinds participate in cross-file FQN
+//     resolution identically to messages and enums.
+//   - Type chains spanning files (Email defined here, CompanyEmail
+//     derived here, ContactEmail derived in another file in #019's
+//     extended corpus) resolve correctly.
+
+syntax = "proto3";
+
+package fixtures.lib;
+
+import "protowire/schema/v1/annotations.proto";
+
+annotation pii;
+
+function matches(value: string, pattern: string);
+function is_e164(value: string);
+
+type Email = string
+  @validate(matches(this, "^[^@]+@[^@]+$"));
+
+type CompanyEmail = Email
+  @validate(matches(this, "^[^@]+@acme\\.com$"));
+
+type PhoneNumber = string
+  @validate(is_e164(this));

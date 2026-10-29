@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 21_http_operation
+// Exercises: the enriched `@http` operation surface (RFC-001 §5.2,
+// issue #173) — the defaulted parameters added for the OpenAPI boundary
+// renderer, at every arm of the additive contract.
+//
+// Expected behavior:
+//   - `ListOrders` uses the v1.2.0 two-argument form. It MUST keep
+//     compiling and lower to exactly the args it wrote: the added
+//     parameters are defaulted, so no existing schema changes shape.
+//   - `GetOrder` sets every parameter. `summary` and `operation_id`
+//     lower as plain `string_value` args; `tags` and `security` lower as
+//     `Literal.list` of string `LiteralValue`s (§8.1).
+//   - `CreateOrder` sets a subset by name, after the positional routing
+//     pair — the ordinary positional-then-named argument shape (§5.1).
+//   - Path templates: `{order_id}` in `GetOrder` binds to the same-named
+//     top-level field of the request message. The compiler checks that
+//     binding — a segment naming no field is a compile error (see
+//     `invalid/http_unbound_template.proto`) — because the routing
+//     skeleton is lowered, not merely carried.
+//   - Every method MUST additionally carry the standard
+//     `google.api.http` option (MethodOptions field 72295728) with the
+//     same skeleton: `get: "/orders"`, `get: "/orders/{order_id}"`, and
+//     `post: "/orders"` with `body: "*"` (§5.2, issue #213). The carrier
+//     keeps the enriched surface HttpRule cannot express; the standard
+//     extension is what off-the-shelf REST binders read. The image
+//     gains no `google/api/annotations.proto` import — the option rides
+//     as unknown-field bytes exactly as the §8.1 carriers do.
+//
+// Operation *metadata* still carries no validation semantics: a port
+// that renders no REST surface parses `summary` / `tags` / `security`
+// and interprets nothing. Compile + lowering only, so there is no
+// report golden.
+
+syntax = "proto3";
+
+package fixtures.http;
+
+import "protowire/schema/v1/annotations.proto";
+
+message ListOrdersRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message CreateOrderRequest {
+  Order order = 1;
+}
+
+@description("a customer order")
+message Order {
+  string order_id = 1;
+  string sku = 2;
+}
+
+service Orders {
+  // The v1.2.0 form, unchanged: proof the added parameters are additive.
+  @http("GET", "/orders")
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+
+  // Every parameter set, including both list-literal arguments.
+  @description("Fetch a single order by its identifier.")
+  @http("GET", "/orders/{order_id}",
+        summary = "Fetch an order",
+        operation_id = "getOrder",
+        tags = ["orders", "public"],
+        security = ["bearerAuth"])
+  rpc GetOrder(GetOrderRequest) returns (Order);
+
+  // A named subset after the positional routing pair.
+  @http("POST", "/orders",
+        tags = ["orders"])
+  rpc CreateOrder(CreateOrderRequest) returns (Order);
+}

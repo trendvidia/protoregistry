@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 23_http_template_paths
+// Exercises: the two `@http` path-template shapes beyond a bare
+// `{name}` (RFC-001 §5.2, issue #217) — a dotted field path, and a
+// variable constrained by a sub-path pattern.
+//
+// Expected behavior:
+//   - `{shelf.id}` binds the `id` field of the top-level `shelf`
+//     field's message. Segments name a field path *from the request
+//     message's top level*; a component that names nothing, or that
+//     descends through a scalar or a repeated field, is a compile
+//     error (see the `invalid/http_*` fixtures).
+//   - `{name=shelves/*}` binds the top-level `name` field and
+//     constrains what it may match. The pattern is part of the routing
+//     skeleton, so it reaches `google.api.http` verbatim.
+//   - Both lower to the standard option unchanged: the carrier and the
+//     `HttpRule` record the path exactly as written, patterns included.
+//   - A REST-surface renderer normalises the OpenAPI *path key* to
+//     `{name}` — OpenAPI's template grammar has no `{name=pattern}`
+//     form — while a dotted variable carries through verbatim, since
+//     OpenAPI parameter names admit dots. So the document's paths are
+//     `/shelves/{shelf.id}` and `/named/{name}`.
+//   - A nested binding takes only the leaf it names out of the
+//     remaining-field binding. `shelf.display_name` still binds, under
+//     its dotted name, exactly where an `HttpRule` consumer puts it;
+//     `include_archived` binds as before (issue #218). Descending into
+//     a container does expose that container's own message-typed
+//     members to the binding, and one with nothing bound below it is
+//     refused like any other — the renderer flattens where a bound leaf
+//     forces it to, not everywhere.
+//
+// Not exercised here, because they are the open remainder of #217 and
+// still fail at render time rather than at compile time (RFC-001 §5.2,
+// "What the grammar above still leaves unsettled"):
+//   - a segment whose *leaf* is message-typed (`{mid.inner}`, and
+//     equally a bare `{mid}`) — it compiles and binds, and a path
+//     parameter has no flat encoding for a message;
+//   - two bindings whose paths differ only in a sub-path constraint
+//     (`{name=shelves/*}` and `{name=shelves/*/books/*}`) — distinct
+//     routes to a binder, one OpenAPI path key, so the pair is refused
+//     as a duplicate operation;
+//   - the constraint reaching a reader at all: dropping it from the
+//     path key drops it from the document, so `name` here renders as an
+//     unconstrained string.
+//
+// Compile + lowering only, so there is no report golden.
+
+syntax = "proto3";
+
+package fixtures.templates;
+
+import "protowire/schema/v1/annotations.proto";
+
+message Shelf {
+  string id = 1;
+  string display_name = 2;
+}
+
+message GetShelfRequest {
+  Shelf shelf = 1;
+  bool include_archived = 2;
+}
+
+message GetNamedRequest {
+  string name = 1;
+}
+
+service Shelves {
+  @http("GET", "/shelves/{shelf.id}")
+  rpc GetShelf(GetShelfRequest) returns (Shelf);
+
+  @http("GET", "/named/{name=shelves/*}")
+  rpc GetNamed(GetNamedRequest) returns (Shelf);
+}
