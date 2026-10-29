@@ -37,7 +37,8 @@ are unchanged, and the client API has no changes.
   shows the `deps` entry and the managed-mode setting Go clients need.
 - **Container image on GHCR**: `ghcr.io/trendvidia/protoregistry`, built for
   `linux/amd64` and `linux/arm64` (#18, #19, #20). A release tag publishes
-  `vX.Y.Z`, `X.Y` and `latest`; `main` publishes a rolling `main` tag.
+  `X.Y.Z` (no `v`), `X.Y` and `latest`; `main` publishes a rolling `main`
+  tag. This release: `ghcr.io/trendvidia/protoregistry:0.73.0`.
 
 ### Changed
 
