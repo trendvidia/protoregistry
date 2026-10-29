@@ -45,7 +45,7 @@ func rfc001Builtins(t *testing.T) []DepSource {
 	t.Helper()
 	var out []DepSource
 	for _, name := range []string{"protowire/schema/v1/annotations.proto", "pxf/annotations.proto"} {
-		b, err := os.ReadFile(filepath.Join("testdata/protowire-builtins", name))
+		b, err := os.ReadFile(filepath.Join("testdata/protowire-builtins", name)) // #nosec G304 -- fixed testdata path
 		require.NoError(t, err)
 		out = append(out, DepSource{Namespace: "__builtins__", SchemaID: "protowire", Version: 1, Filename: name, Source: b})
 	}
@@ -75,7 +75,7 @@ func rfc001Fixtures(t *testing.T) map[string]map[string][]byte {
 		case strings.HasPrefix(rel, "06_"):
 			group = "06_cross_file"
 		}
-		src, err := os.ReadFile(p)
+		src, err := os.ReadFile(p) // #nosec G304 -- walked under testdata/
 		if err != nil {
 			return err
 		}
