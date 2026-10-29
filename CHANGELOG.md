@@ -11,15 +11,16 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ### Added
 
-- **`protowire/schema/v1/annotations.proto` is bundled** (#33). Every
-  schema using RFC-001 syntax imports it, so such a schema now publishes
-  with no setup. It used to fail with "imported file does not exist"
-  until an operator published the file to `__builtins__`. It resolves
-  after `__builtins__` (an operator's own copy still wins) and before
-  Google's well-known types. The copy comes from the
-  `github.com/trendvidia/protowire` module (v1.12.0), which raises
-  grpc to v1.83.2 and golang.org/x/net to v0.58.0 through its
-  requirements.
+- **Two protowire schemas are bundled** (#33):
+  `protowire/schema/v1/annotations.proto`, which every schema using RFC-001
+  syntax imports, and `pxf/annotations.proto`, for the PXF field options
+  `(pxf.required)`, `(pxf.default)` and `(pxf.key)`. A schema importing
+  either now publishes with no setup. It used to fail with "imported file
+  does not exist" until an operator published the file to `__builtins__`.
+  They resolve after `__builtins__` (an operator's own copy still wins) and
+  before Google's well-known types. The copies come from the
+  `github.com/trendvidia/protowire` module (v1.12.0), which raises grpc to
+  v1.83.2 and golang.org/x/net to v0.58.0 through its requirements.
 
 ### Changed
 

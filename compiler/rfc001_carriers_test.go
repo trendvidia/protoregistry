@@ -38,17 +38,6 @@ const (
 	carrierSourceMap      = 1331
 )
 
-// rfc001Builtins is the file one fixture imports that protoregistry does
-// not bundle: the legacy pxf/annotations.proto. A namespace supplies it
-// through __builtins__. protowire/schema/v1/annotations.proto is bundled.
-func rfc001Builtins(t *testing.T) []DepSource {
-	t.Helper()
-	const name = "pxf/annotations.proto"
-	b, err := os.ReadFile(filepath.Join("testdata/protowire-builtins", name)) // #nosec G304 -- fixed testdata path
-	require.NoError(t, err)
-	return []DepSource{{Namespace: "__builtins__", SchemaID: "protowire", Version: 1, Filename: name, Source: b}}
-}
-
 // rfc001Fixtures reads protowire's testdata/schema-extensions, grouped into
 // the files that compile together: one group per file, except the 06_
 // cross-file pair and the 07_report_golden tree.
@@ -132,14 +121,11 @@ func marshalFile(t *testing.T, fdp *descriptorpb.FileDescriptorProto) []byte {
 
 // compileDirect compiles a group with the protocompile fork alone, outside
 // the registry, as protowire's toolchain does.
-func compileDirect(t *testing.T, sources map[string][]byte, builtins []DepSource) map[string][]byte {
+func compileDirect(t *testing.T, sources map[string][]byte) map[string][]byte {
 	t.Helper()
 	files := map[string][]byte{}
 	for name, src := range sources {
 		files[name] = src
-	}
-	for _, b := range builtins {
-		files[b.Filename] = b.Source
 	}
 	for path, embedded := range bundledImports {
 		src, err := fs.ReadFile(protowireschemas.BundledProto, embedded)
@@ -165,15 +151,14 @@ func compileDirect(t *testing.T, sources map[string][]byte, builtins []DepSource
 	return out
 }
 
-// A schema using RFC-001 syntax publishes with no setup (its
-// protowire/schema/v1/annotations.proto import resolves from the bundled
-// copy), and the carriers the compiler
+// A schema using RFC-001 syntax publishes with no setup (its imports of
+// protowire/schema/v1/annotations.proto and pxf/annotations.proto resolve
+// from the bundled copies), and the carriers the compiler
 // emits survive storage unchanged: the stored descriptors equal what the
 // toolchain alone produces, byte for byte, and they come back byte-identical
 // through both read paths — snapshot.New (Restore) and the GetDescriptor
 // decode/re-encode. Fixtures: protowire testdata/schema-extensions.
 func TestCompile_RFC001CarriersRoundTrip(t *testing.T) {
-	builtins := rfc001Builtins(t)
 	groups := rfc001Fixtures(t)
 	names := make([]string, 0, len(groups))
 	for name := range groups {
@@ -185,12 +170,12 @@ func TestCompile_RFC001CarriersRoundTrip(t *testing.T) {
 	for _, name := range names {
 		sources := groups[name]
 		t.Run(name, func(t *testing.T) {
-			res, err := New().Compile(context.Background(), 1, sources, nil, nil, builtins)
+			res, err := New().Compile(context.Background(), 1, sources, nil, nil, nil)
 			require.NoError(t, err)
 
 			stored := &descriptorpb.FileDescriptorSet{}
 			require.NoError(t, proto.Unmarshal(res.Compiled, stored))
-			direct := compileDirect(t, sources, builtins)
+			direct := compileDirect(t, sources)
 
 			restored, err := snapshot.New(1, stored)
 			require.NoError(t, err)
@@ -237,23 +222,25 @@ func TestCompile_RFC001CarriersRoundTrip(t *testing.T) {
 	}
 }
 
-// The bundled annotations.proto is enough on its own: an RFC-001 schema
-// compiles with nothing in __builtins__.
+// The bundled files are enough on their own: a schema importing both
+// protowire/schema/v1/annotations.proto and pxf/annotations.proto compiles
+// with nothing in __builtins__, and both are stored with it.
 func TestCompile_BundledProtowireAnnotations(t *testing.T) {
-	src, err := os.ReadFile("testdata/schema-extensions/01_basic.proto")
+	src, err := os.ReadFile("testdata/schema-extensions/04_required_and_default.proto")
 	require.NoError(t, err)
-	res, err := New().Compile(context.Background(), 1, map[string][]byte{"01_basic.proto": src}, nil, nil, nil)
+	res, err := New().Compile(context.Background(), 1, map[string][]byte{"04_required_and_default.proto": src}, nil, nil, nil)
 	require.NoError(t, err)
 	stored := &descriptorpb.FileDescriptorSet{}
 	require.NoError(t, proto.Unmarshal(res.Compiled, stored))
 	var names []string
 	for _, f := range stored.GetFile() {
 		names = append(names, f.GetName())
-		if f.GetName() == "01_basic.proto" {
+		if f.GetName() == "04_required_and_default.proto" {
 			assert.NotEmpty(t, carriers(t, f))
 		}
 	}
-	assert.Contains(t, names, "protowire/schema/v1/annotations.proto", "the bundled file is stored with the schema, like any import")
+	assert.Contains(t, names, "protowire/schema/v1/annotations.proto")
+	assert.Contains(t, names, "pxf/annotations.proto")
 }
 
 // An operator's copy in __builtins__ wins over the bundled one. Here the
