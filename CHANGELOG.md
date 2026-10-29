@@ -19,8 +19,8 @@ version — see [`STABILITY.md`](STABILITY.md).
   does not exist" until an operator published the file to `__builtins__`.
   They resolve after `__builtins__` (an operator's own copy still wins) and
   before Google's well-known types. The copies come from the
-  `github.com/trendvidia/protowire` module (v1.12.0), which raises grpc to
-  v1.83.2 and golang.org/x/net to v0.58.0 through its requirements.
+  `github.com/trendvidia/protowire` module (v1.13.0), which raises grpc to
+  v1.84.0 and golang.org/x/net to v0.58.0 through its requirements.
 
 ### Changed
 
