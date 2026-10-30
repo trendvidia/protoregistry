@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trendvidia/protocompile"
-	protowireschemas "github.com/trendvidia/protowire"
+	"github.com/trendvidia/protos"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -127,8 +127,8 @@ func compileDirect(t *testing.T, sources map[string][]byte) map[string][]byte {
 	for name, src := range sources {
 		files[name] = src
 	}
-	for path, embedded := range bundledImports {
-		src, err := fs.ReadFile(protowireschemas.BundledProto, embedded)
+	for _, path := range bundledImports {
+		src, err := fs.ReadFile(protos.Files, path)
 		require.NoError(t, err)
 		files[path] = src
 	}
@@ -241,6 +241,12 @@ func TestCompile_BundledProtowireAnnotations(t *testing.T) {
 	}
 	assert.Contains(t, names, "protowire/schema/v1/annotations.proto")
 	assert.Contains(t, names, "pxf/annotations.proto")
+	for _, f := range stored.GetFile() {
+		if f.GetName() == "pxf/annotations.proto" {
+			assert.Equal(t, "github.com/trendvidia/protos/pxf;pxf", f.GetOptions().GetGoPackage(),
+				"the bundled copy comes from protos")
+		}
+	}
 }
 
 // An operator's copy in __builtins__ wins over the bundled one. Here the
