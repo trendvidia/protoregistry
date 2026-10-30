@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Adds the SPDX license header to every hand-written Go file in the repo.
-# Idempotent: files that already start with the SPDX line are left alone.
+# Idempotent: files that already carry an SPDX line, of any license, are left alone.
 # Generated files (*.pb.go, *_grpc.pb.go, store/postgres/sqlc/*.go) are skipped
 # since they are regenerated from proto / SQL sources.
 #
@@ -14,7 +14,7 @@ HEADER='// Copyright (c) 2026 TrendVidia, LLC.
 // SPDX-License-Identifier: MIT
 '
 
-MARKER='SPDX-License-Identifier: MIT'
+MARKER='SPDX-License-Identifier:'
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
