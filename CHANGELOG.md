@@ -9,6 +9,13 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.74.0] - 2026-10-30
+
+`client` now builds on stock `google.golang.org/protobuf`, so a program importing
+it no longer needs a `replace` for the trendvidia/protobuf-go fork. This module
+no longer requires protowire either. One client API change: the namespaced
+registries moved to the new `nsregistry` package. Source hashes are unchanged.
+
 ### Changed
 
 - **`client` no longer needs the protobuf fork** (#44). A binary importing
@@ -29,6 +36,10 @@ version — see [`STABILITY.md`](STABILITY.md).
   `go_package` and the Java and C# options, so generated code from a stored
   schema resolves to the `protos` packages. Only versions compiled from now on
   carry them. Source hashes are unchanged.
+
+### Chores
+
+- GitHub Actions `actions/setup-go` v7 (#34).
 
 ## [0.73.0] - 2026-10-29
 
