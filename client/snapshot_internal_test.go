@@ -10,8 +10,9 @@ import (
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
+
+	"github.com/trendvidia/protoregistry/nsregistry"
 )
 
 // TestBuildNameIndex_Collision verifies the fail-loud guarantee: two
@@ -97,8 +98,8 @@ func buildSchemaSnapshot(t *testing.T, schemaID, fileTextProto string) *schemaSn
 	if err != nil {
 		t.Fatalf("compiling descriptors: %v", err)
 	}
-	files := protoregistry.NewNamespacedFiles(nil)
-	types := protoregistry.NewNamespacedTypes(nil)
+	files := nsregistry.NewNamespacedFiles(nil)
+	types := nsregistry.NewNamespacedTypes(nil)
 	var rangeErr error
 	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
 		if err := files.RegisterFile(fd); err != nil {

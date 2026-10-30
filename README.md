@@ -456,36 +456,16 @@ desc, _ := r.FindDescriptorByName("billing.Config")
 msg, _  := pxf.UnmarshalDescriptor(pxfBytes, desc.(protoreflect.MessageDescriptor))
 ```
 
-### Note: this module pins the trendvidia/protobuf-go fork
+### Note: the protobuf fork is optional
 
-`protoregistry/client` stores per-schema descriptors in
-`*protoregistry.NamespacedFiles` / `*protoregistry.NamespacedTypes` —
-the namespace-isolated registry types added in the
-[`trendvidia/protobuf-go`](https://github.com/trendvidia/protobuf-go)
-fork. Those types do not exist in upstream `google.golang.org/protobuf`,
-so this module's `go.mod` carries:
+`protoregistry/client` builds on stock `google.golang.org/protobuf`; no
+`replace` is needed. Its per-schema registries are in
+[`nsregistry`](nsregistry/).
 
-```
-replace google.golang.org/protobuf => github.com/trendvidia/protobuf-go v1.36.12
-```
-
-Go's [`replace` directive does not propagate across module boundaries](https://go.dev/ref/mod#go-mod-file-replace),
-so consuming binaries will still pull upstream protobuf-go by default
-when they depend on protoregistry. Without the same replace in the
-*top-level* binary's `go.mod`, the build fails — the namespace types
-are referenced by name and have no upstream equivalent.
-
-**Add the same `replace` to the binary's go.mod when you depend on
-`protoregistry/client`.** The fork keeps the upstream import path,
-tracks upstream tags closely, and adds only the namespace registry +
-the `dynamicpb.SetUnsafe` family used by `protowire-go`. Code that
-compiles against upstream compiles against the fork unchanged.
-
-If your project must use upstream `google.golang.org/protobuf`
-exactly, do not import `protoregistry/client` — call the gRPC service
-directly via the generated stubs in
-[`proto/protoregistry/v1`](proto/protoregistry/v1/) and store
-descriptors yourself with upstream `*protoregistry.Files`.
+[`trendvidia/protobuf-go`](https://github.com/trendvidia/protobuf-go) stays
+available as an opt-in speedup: `protowire-go` decodes dynamic messages faster
+when a binary replaces protobuf with it. See
+[trendvidia/protobuf-go#13](https://github.com/trendvidia/protobuf-go/issues/13).
 
 ## Development
 
