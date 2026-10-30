@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 06_cross_file_main
+// Companion to 06_cross_file_lib.proto.
+//
+// Demonstrates cross-file resolution: a single `import` brings the
+// library's types, functions, and annotations into scope under their
+// fully-qualified names.
+
+syntax = "proto3";
+
+package fixtures.app;
+
+import "protowire/schema/v1/annotations.proto";
+import "06_cross_file_lib.proto";
+
+@description("a registered user")
+message User {
+  // Type imported from fixtures.lib; expansion at this site carries
+  // BOTH the Email rule (matches a generic address) AND the
+  // CompanyEmail rule (matches @acme.com specifically) in
+  // base-to-derived order.
+  fixtures.lib.CompanyEmail email = 1
+    @fixtures.lib.pii;
+
+  // Type and the rule it references are both cross-file references.
+  fixtures.lib.PhoneNumber phone = 2;
+
+  // Local plain field for contrast.
+  string display_name = 3;
+}

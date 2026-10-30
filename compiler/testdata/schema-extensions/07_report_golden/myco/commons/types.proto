@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 07_report_golden/myco/commons/types.proto
+// The commons type library the §5.3 worked example imports. Email and
+// CompanyEmail match the RFC-001 §6.3 composition example; PhoneNumber
+// is pinned here.
+//
+// Expected behavior (../../../07_report_golden.textproto):
+//   - CompanyEmail contributes the 3-link chain
+//     ["string", "myco.commons.Email", "myco.commons.CompanyEmail"];
+//     its rule carries use-site code/message overrides. matches and
+//     ends_with are engine builtins, not declared functions, so both
+//     rules are inline expressions: cause.params stays empty (§7
+//     params provenance).
+//   - PhoneNumber's rule calls the declared function valid_phone
+//     (validator.proto). The golden instance omits phone, so the rule
+//     never runs — @required fires at the use site instead.
+
+syntax = "proto3";
+
+package myco.commons;
+
+import "myco/commons/validator.proto";
+import "protowire/schema/v1/annotations.proto";
+
+type Email = string
+  @validate(matches(this, "^[^@]+@[^@]+$"));
+
+type CompanyEmail = Email
+  @validate(
+    ends_with(this, "@acme.com"),
+    code = "myco.commons.email.company_domain",
+    message = "must be an @acme.com address"
+  );
+
+type PhoneNumber = string
+  @validate(valid_phone(this));

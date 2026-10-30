@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 12_expression_args
+// Exercises: engine-expression annotation arguments — balanced-token
+// capture edge cases, named args after an expression arg, and
+// function-call extraction into Expression.calls (§5.1 "Engine
+// expressions", §8.1 "Expression lowering", issue #91).
+//
+// Expected behavior:
+//   - Every `rule:` argument below lowers to AnnotationArg.expression
+//     with `source` captured verbatim (whitespace-trimmed, quotes never
+//     stripped). Capture ends at the first `,` or `)` at zero delimiter
+//     depth; `()`, `[]`, `{}` balance, and string literals are opaque
+//     to the scan.
+//   - `in_region(this, ["US", "CA"])` resolves to the `function`
+//     declaration below: Expression.calls carries one FunctionRef
+//     {fqn: "fixtures.expressions.in_region", arity: 2}. Arity is
+//     top-level commas + 1 — the comma inside the list literal does
+//     not count.
+//   - `matches(...)`, `size(...)`, `now()`, and `this.size()` are §5.4
+//     builtins: absent from Expression.calls, no diagnostic. Since §5.4
+//     (issue #282) a name that is neither a builtin nor a visible
+//     `function` is a compile error (invalid/unresolved_expression_call).
+//   - `code = "..."` after an expression arg is a named argument: the
+//     leading `Ident "="` (single `=`) is peeled before capture. The
+//     `==` in strict_tier's rule stays inside the capture.
+
+syntax = "proto3";
+
+package fixtures.expressions;
+
+import "protowire/schema/v1/annotations.proto";
+
+// Declared function: calls to it are extracted and arity-checked.
+function in_region(value: string, regions: string);
+
+message Account {
+  // Call of a declared function; list literal nested in the call.
+  // calls = [{fqn: "fixtures.expressions.in_region", arity: 2}]
+  string country = 1
+    @validate(in_region(this, ["US", "CA"]), code = "account.bad_region");
+
+  // Engine builtins only: calls = []. The comma and `)` inside the
+  // string literal are opaque to the capture scan.
+  string display_name = 2
+    @validate(matches(this, "^[a-z),]+$"), code = "account.bad_name");
+
+  // Infix fragment with a `==` — not a named argument.
+  int32 tier = 3
+    @validate(this == 1 || this == 2, code = "account.bad_tier");
+
+  // Method-style builtin plus comparison; `this.size` can never
+  // resolve to a declaration.
+  string note = 4
+    @validate(this.size() < 280);
+
+  // Nested delimiters of all three kinds in one capture: parentheses
+  // around a list around string literals that themselves hold `(`, `[`
+  // and `{`, opaque to the scan — and a §5.4 expression throughout.
+  string tags_csv = 5
+    @validate(!(this in ["(", "[", "{"]) && size(this) > 0,
+              message = "tags_csv is empty or a bare delimiter");
+}

@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 03_message_and_field_annotations
+// Exercises: hybrid placement — leading on block declarations
+// (message, oneof, service, rpc, enum), trailing on field and
+// enum value.
+//
+// Expected behavior:
+//   - `@validate(same_domain(this))` on User receives `this` bound to the
+//     User message at runtime.
+//   - `@validate(...)` on `kind` inside the oneof applies only when the
+//     `email` variant is the active oneof selection.
+//   - Each enum value's `@description` lowers to a carrier entry on
+//     EnumValueOptions.
+
+syntax = "proto3";
+
+package fixtures.placement;
+
+import "protowire/schema/v1/annotations.proto";
+
+function same_domain(msg: User);
+function matches(value: string, pattern: string);
+
+@description("user account aggregate")
+@validate(same_domain(this))
+message User {
+  string email = 1
+    @description("primary email")
+    @validate(matches(this, "^[^@]+@[^@]+$"));
+
+  @description("preferred contact channel")
+  oneof preferred_contact {
+    string email_address = 2
+      @validate(matches(this, "^[^@]+@[^@]+$"));
+    string phone_number = 3;
+  }
+}
+
+@description("subscription tier")
+enum Tier {
+  TIER_UNSPECIFIED = 0 @description("not yet selected");
+  TIER_FREE        = 1 @description("free tier");
+  TIER_PRO         = 2 @description("paid pro tier");
+}
+
+@description("user management surface")
+service Users {
+  @http(method = "GET", path = "/users/{user_id}")
+  @description("retrieve a user by ID")
+  rpc Get(GetUserRequest) returns (User);
+}
+
+message GetUserRequest {
+  string user_id = 1 @validate(matches(this, "^u_[a-z0-9]+$"));
+}

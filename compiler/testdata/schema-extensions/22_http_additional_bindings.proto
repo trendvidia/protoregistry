@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 22_http_additional_bindings
+// Exercises: a method carrying several `@http` use sites (RFC-001 §5.2,
+// issues #213 and #215) — the shape that expresses a versioned or
+// aliased route for one RPC.
+//
+// Expected behavior:
+//   - `GetOrder` carries three use sites. They lower to three entries
+//     in the method's `1327` carrier, in source order: repetition is
+//     ordinary annotation repetition at the carrier level.
+//   - The standard `google.api.http` option carries the same three: the
+//     first as the rule's own pattern, the rest as `additional_bindings`
+//     in source order (§5.2). A consumer that binds only the primary
+//     rule serves `/orders/{order_id}`; one that honours additional
+//     bindings serves all three.
+//   - Bindings after the first MUST name their own `operation_id`. The
+//     derived `<Service>_<Method>` spelling is document-unique only
+//     while a method has one binding, and an index-derived id would
+//     rename a generated client method whenever two annotation lines
+//     are reordered (#215). This is a *renderer* obligation: the
+//     compiler carries the arguments either way, and a port that
+//     renders no REST surface never has to check it.
+//   - The coverage denominator counts *methods*, not bindings: this
+//     file contributes one `@http` method, like any other (#200).
+//
+// Compile + lowering only, so there is no report golden.
+
+syntax = "proto3";
+
+package fixtures.bindings;
+
+import "protowire/schema/v1/annotations.proto";
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message Order {
+  string order_id = 1;
+  string sku = 2;
+}
+
+service Orders {
+  // The primary rule, then two aliases. The first keeps the derived
+  // operation id; the aliases name their own.
+  @http("GET", "/orders/{order_id}")
+  @http("GET", "/v2/orders/{order_id}", operation_id = "getOrderV2")
+  @http("GET", "/legacy/orders/{order_id}",
+        operation_id = "getOrderLegacy",
+        summary = "Fetch an order by its pre-migration route",
+        tags = ["orders", "deprecated"])
+  rpc GetOrder(GetOrderRequest) returns (Order);
+}

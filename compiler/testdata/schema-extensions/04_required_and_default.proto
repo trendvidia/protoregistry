@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 04_required_and_default
+// Exercises: @required and @default annotations + their bracket-form
+// equivalents from protowire v1.0 (`(pxf.required)` / `(pxf.default)`).
+//
+// Expected behavior:
+//   - The two forms lower to DISJOINT surfaces (no dual-emission; RFC-001
+//     §8.5, issue #92): fields using the annotation form populate only the
+//     1327 carrier — `(pxf.required)`/`(pxf.default)` are NOT synthesized,
+//     so legacy-option readers do not see them.
+//   - Fields declared with the bracket form lower to the legacy options
+//     only, exactly as written; the annotation carrier is NOT populated.
+//   - A compiler MAY warn when both forms of the same semantic carry
+//     conflicting values on one field; it MUST NOT reconcile them.
+//   - At validation time (carrier-aware consumers): an absent field with
+//     @required produces a Violation code "required"; an absent field
+//     with @default(v) is replaced by v before rules evaluate.
+
+syntax = "proto3";
+
+package fixtures.presence;
+
+import "protowire/schema/v1/annotations.proto";
+import "pxf/annotations.proto";  // legacy (pxf.required), (pxf.default)
+
+message AccountSettings {
+  // Canonical v1.2 form.
+  string display_name = 1 @required;
+
+  // Canonical v1.2 form with a default value.
+  string role = 2 @default("viewer");
+
+  // Stacked annotations: required AND validated when present.
+  string email = 3
+    @required
+    @validate(this.size() > 0, code = "email.empty");
+
+  // Legacy bracket form, still accepted by v1.2 parsers.
+  string legacy_locale = 4 [(pxf.required) = true];
+  string legacy_theme  = 5 [(pxf.default) = "\"system\""];
+}

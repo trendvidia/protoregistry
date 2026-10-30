@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 07_report_golden/myco/users/user.proto
+// The RFC-001 §5.3 worked example as an executable conformance fixture.
+// A conformant engine validating ../../instance.textproto against this
+// schema emits a Report semantically equal to
+// ../../../07_report_golden.textproto (violation order per §6.4;
+// wall_time_nanos and engine excluded from equality).
+//
+// Deltas from the §5.3 prose, deliberate and documented:
+//   - commons type references are fully qualified (cross-package name
+//     resolution follows proto scoping rules);
+//   - GetUserRequest is defined (the prose elides it).
+//
+// The golden's source locations cite the field declaration lines below;
+// keep the layout stable or re-sync the golden.
+
+syntax = "proto3";
+
+package myco.users;
+
+import "myco/commons/types.proto";
+import "myco/commons/validator.proto";
+import "protowire/schema/v1/annotations.proto";
+
+function same_domain(msg: User) [error_code = "user.domain_mismatch"];
+
+@description("a user account on the platform")
+@validate(same_domain(this))
+message User {
+  myco.commons.CompanyEmail email = 1
+    @description("primary email")
+    @example("alice@acme.com");
+
+  myco.commons.PhoneNumber phone = 2 @required;
+
+  string country = 3
+    @default("US")
+    @validate(this in ["US", "CA", "GB"], code = "user.invalid_country", message = "country not supported");
+}
+
+@description("user management operations")
+service Users {
+  @http(method = "GET", path = "/users/{user_id}")
+  @description("retrieve a user by ID")
+  rpc Get(GetUserRequest) returns (User);
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
