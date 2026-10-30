@@ -9,6 +9,21 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+### Changed
+
+- **`client` no longer needs the protobuf fork** (#44). A binary importing
+  `client` can drop its `replace` of `google.golang.org/protobuf`. A binary
+  that replaces it with trendvidia/protobuf-go still builds.
+
+  **Breaking:** the namespaced registries moved to the new `nsregistry`
+  package, so `WithFallback` now takes `*nsregistry.NamespacedFiles` and
+  `*nsregistry.NamespacedTypes`. Change `protoregistry.NewNamespacedFiles` and
+  its neighbours to `nsregistry`.
+
+  Errors from those registries now start with `nsregistry:` instead of
+  `proto:`. The legacy MessageSet lookup, which only ran under the
+  `protolegacy` build tag, is gone.
+
 ## [0.73.0] - 2026-10-29
 
 Schemas written with RFC-001 syntax (Protowire Schema Extensions) now

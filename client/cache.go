@@ -17,10 +17,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
-)
 
+	"github.com/trendvidia/protoregistry/nsregistry"
+)
 
 // cacheManifestVersion is the schema version of the on-disk manifest
 // JSON. Bump when the layout changes; readers reject mismatched
@@ -311,8 +311,8 @@ func loadSingleNamespaceFromCache(cacheDir, namespace string, cfg config, parent
 		ns:        namespace,
 		cfg:       cfg,
 		logger:    resolveLogger(cfg.logger),
-		nsFiles:   protoregistry.NewNamespacedFiles(cfg.parentFiles),
-		nsTypes:   protoregistry.NewNamespacedTypes(cfg.parentTypes),
+		nsFiles:   nsregistry.NewNamespacedFiles(cfg.parentFiles),
+		nsTypes:   nsregistry.NewNamespacedTypes(cfg.parentTypes),
 		fromCache: true,
 	}
 	r.cfg.refresh = 0 // no refresh loop in stale mode

@@ -84,10 +84,3 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260807164820-c8921c73eeea // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260729162451-8efbd57d26e0 // indirect
 )
-
-// protoregistry/client uses the namespace-isolated registry types
-// (protoregistry.NamespacedFiles, NamespacedTypes) added in the
-// trendvidia/protobuf-go fork. These types are not present in upstream
-// google.golang.org/protobuf, so importing this module pins the fork
-// for the consuming binary as well. See the README for the rationale.
-replace google.golang.org/protobuf => github.com/trendvidia/protobuf-go v1.36.12

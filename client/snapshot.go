@@ -12,10 +12,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 
+	"github.com/trendvidia/protoregistry/nsregistry"
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
 )
 
@@ -52,8 +52,8 @@ type nsSnapshot struct {
 type schemaSnapshot struct {
 	schemaID       string
 	version        uint64
-	files          *protoregistry.NamespacedFiles
-	types          *protoregistry.NamespacedTypes
+	files          *nsregistry.NamespacedFiles
+	types          *nsregistry.NamespacedTypes
 	aggFingerprint aggFingerprint
 
 	// rawDescriptorSet is the wire-format FileDescriptorSet bytes
@@ -144,7 +144,7 @@ func (r *Resolver) removeFromAggregate(ss *schemaSnapshot) error {
 // where the same descriptor (e.g. a well-known type) may already be
 // registered by a sibling schema; UpdateMessage / UpdateEnum /
 // UpdateExtension upsert silently rather than erroring on duplicates.
-func registerFileTypesUpdate(types *protoregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
+func registerFileTypesUpdate(types *nsregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
 	msgs := fd.Messages()
 	for i := 0; i < msgs.Len(); i++ {
 		if err := registerMessageTypesUpdate(types, msgs.Get(i)); err != nil {
@@ -166,7 +166,7 @@ func registerFileTypesUpdate(types *protoregistry.NamespacedTypes, fd protorefle
 	return nil
 }
 
-func registerMessageTypesUpdate(types *protoregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
+func registerMessageTypesUpdate(types *nsregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
 	if err := types.UpdateMessage(dynamicpb.NewMessageType(msg)); err != nil {
 		return err
 	}
@@ -346,8 +346,8 @@ func (r *Resolver) compileSchema(schemaID string, version uint64, fdset *descrip
 	// aggregate (configured via WithFallback / WithParent /
 	// WithGlobalFallback), so SchemaResolver lookups also see
 	// well-known and shared types declared at the parent level.
-	files := protoregistry.NewNamespacedFiles(r.cfg.parentFiles)
-	types := protoregistry.NewNamespacedTypes(r.cfg.parentTypes)
+	files := nsregistry.NewNamespacedFiles(r.cfg.parentFiles)
+	types := nsregistry.NewNamespacedTypes(r.cfg.parentTypes)
 	var fp aggFingerprint
 	var rangeErr error
 	compiled.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
@@ -418,7 +418,7 @@ func (fp *aggFingerprint) collectMessage(msg protoreflect.MessageDescriptor) {
 // registers a dynamic type for it in types. Services and methods do
 // not have associated runtime types, so they are skipped here — they
 // are still discoverable via the parallel files registry.
-func registerFileTypes(types *protoregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
+func registerFileTypes(types *nsregistry.NamespacedTypes, fd protoreflect.FileDescriptor) error {
 	msgs := fd.Messages()
 	for i := 0; i < msgs.Len(); i++ {
 		if err := registerMessageTypes(types, msgs.Get(i)); err != nil {
@@ -440,7 +440,7 @@ func registerFileTypes(types *protoregistry.NamespacedTypes, fd protoreflect.Fil
 	return nil
 }
 
-func registerMessageTypes(types *protoregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
+func registerMessageTypes(types *nsregistry.NamespacedTypes, msg protoreflect.MessageDescriptor) error {
 	if err := types.RegisterMessage(dynamicpb.NewMessageType(msg)); err != nil {
 		return err
 	}

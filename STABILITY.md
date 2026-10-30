@@ -15,7 +15,7 @@ in [`CHANGELOG.md`](CHANGELOG.md) and avoid them where reasonable.
 The project has three public surfaces, each with its own contract:
 
 1. **The gRPC service** (`proto/protoregistry/v1/registry.proto`).
-2. **The Go library** (`registry.go`, `snapshot/`, `namespace/`, `resolve/`).
+2. **The Go library** (`registry.go`, `snapshot/`, `namespace/`, `nsregistry/`, `resolve/`).
 3. **The `protoregistry` CLI** (`cmd/protoregistry/`).
 
 ### gRPC service — strongest contract
@@ -39,7 +39,7 @@ At `v1.0.0`:
 At `v1.0.0` we will adopt SemVer for the Go module path. Until then:
 
 - Exported types and functions in `registry.go`, `snapshot/`, `namespace/`,
-  and `resolve/` may be renamed, restructured, or removed at any minor
+  `nsregistry/`, and `resolve/` may be renamed, restructured, or removed at any minor
   version. Breaking changes will be called out in `CHANGELOG.md`.
 - Internal packages (`internal/`) carry no stability guarantee at any
   version, including post-`v1.0.0`.

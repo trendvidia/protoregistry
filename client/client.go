@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 
+	"github.com/trendvidia/protoregistry/nsregistry"
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
 )
 
@@ -65,8 +66,8 @@ type Resolver struct {
 	// ordering). For schema-consistent reads, use [Resolver.Schema]
 	// (which goes through the snapshot only) or [Resolver.Pin] (which
 	// returns a fully-frozen Resolver).
-	nsFiles *protoregistry.NamespacedFiles
-	nsTypes *protoregistry.NamespacedTypes
+	nsFiles *nsregistry.NamespacedFiles
+	nsTypes *nsregistry.NamespacedTypes
 
 	refreshMu sync.Mutex // serializes Refresh calls and aggregate mutations
 
@@ -210,8 +211,8 @@ func newSingleNamespace(ctx context.Context, conn *grpc.ClientConn, namespace st
 		ns:      namespace,
 		cfg:     cfg,
 		logger:  resolveLogger(cfg.logger),
-		nsFiles: protoregistry.NewNamespacedFiles(cfg.parentFiles),
-		nsTypes: protoregistry.NewNamespacedTypes(cfg.parentTypes),
+		nsFiles: nsregistry.NewNamespacedFiles(cfg.parentFiles),
+		nsTypes: nsregistry.NewNamespacedTypes(cfg.parentTypes),
 	}
 
 	if err := r.populate(ctx); err != nil {
@@ -331,8 +332,8 @@ func (r *Resolver) Pin(ctx context.Context, versions map[string]uint64) (*Resolv
 		ns:       r.ns,
 		cfg:      r.cfg,
 		logger:   r.logger,
-		nsFiles:  protoregistry.NewNamespacedFiles(r.cfg.parentFiles),
-		nsTypes:  protoregistry.NewNamespacedTypes(r.cfg.parentTypes),
+		nsFiles:  nsregistry.NewNamespacedFiles(r.cfg.parentFiles),
+		nsTypes:  nsregistry.NewNamespacedTypes(r.cfg.parentTypes),
 	}
 	pinned.cfg.refresh = 0
 	pinned.cfg.token = r.cfg.token
@@ -499,7 +500,7 @@ func (r *Resolver) RangeMessages(f func(protoreflect.MessageType) bool) {
 		return
 	}
 	cont := true
-	walk := func(types *protoregistry.NamespacedTypes) {
+	walk := func(types *nsregistry.NamespacedTypes) {
 		if !cont || types == nil {
 			return
 		}
@@ -678,7 +679,7 @@ func (r *Resolver) fetchOwnSource(ctx context.Context, filePath string) ([]byte,
 // parent-chain walk) for the given full name. nsTypes.RangeMessages
 // is local-only by design — the parent-walking lookup methods don't
 // expose tier identity, so we iterate to get it.
-func findLocalMessage(t *protoregistry.NamespacedTypes, name protoreflect.FullName) protoreflect.MessageType {
+func findLocalMessage(t *nsregistry.NamespacedTypes, name protoreflect.FullName) protoreflect.MessageType {
 	if t == nil {
 		return nil
 	}
@@ -694,7 +695,7 @@ func findLocalMessage(t *protoregistry.NamespacedTypes, name protoreflect.FullNa
 }
 
 // findLocalFile is the file-tier counterpart to findLocalMessage.
-func findLocalFile(f *protoregistry.NamespacedFiles, path string) protoreflect.FileDescriptor {
+func findLocalFile(f *nsregistry.NamespacedFiles, path string) protoreflect.FileDescriptor {
 	if f == nil {
 		return nil
 	}
@@ -776,8 +777,8 @@ type config struct {
 	// these parents — local lookups take precedence; misses fall
 	// through to the parent. See WithFallback / WithParent /
 	// WithGlobalFallback.
-	parentFiles *protoregistry.NamespacedFiles
-	parentTypes *protoregistry.NamespacedTypes
+	parentFiles *nsregistry.NamespacedFiles
+	parentTypes *nsregistry.NamespacedTypes
 
 	// cacheDir, when non-empty, enables on-disk descriptor caching.
 	// The Resolver persists each successful refresh under
@@ -860,7 +861,7 @@ func WithTransportCredentials(creds credentials.TransportCredentials) Option {
 // a parent namespace on the server), prefer [WithServerChain] — it
 // consults the registry's authoritative chain, so client and server
 // can't disagree about what types are visible.
-func WithFallback(files *protoregistry.NamespacedFiles, types *protoregistry.NamespacedTypes) Option {
+func WithFallback(files *nsregistry.NamespacedFiles, types *nsregistry.NamespacedTypes) Option {
 	return func(c *config) {
 		c.parentFiles = files
 		c.parentTypes = types
@@ -906,7 +907,7 @@ func WithParent(parent *Resolver) Option {
 // never writes to them.
 //
 // Equivalent to calling [WithFallback] with a pair of global-wrapping
-// registries derived from [protoregistry.NewNamespaceOverGlobal].
+// registries derived from [nsregistry.NewNamespaceOverGlobal].
 //
 // Note: for namespace-hierarchy use cases (org-shared types living in
 // a parent namespace on the server), prefer [WithServerChain] — it
@@ -914,7 +915,7 @@ func WithParent(parent *Resolver) Option {
 // client-side configuration that could drift.
 func WithGlobalFallback() Option {
 	return func(c *config) {
-		ns := protoregistry.NewNamespaceOverGlobal()
+		ns := nsregistry.NewNamespaceOverGlobal()
 		c.parentFiles = ns.Files
 		c.parentTypes = ns.Types
 	}
