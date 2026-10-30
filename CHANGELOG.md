@@ -24,6 +24,12 @@ version — see [`STABILITY.md`](STABILITY.md).
   `proto:`. The legacy MessageSet lookup, which only ran under the
   `protolegacy` build tag, is gone.
 
+- **The two bundled protowire schemas now come from `trendvidia/protos`** (#45),
+  so this module no longer requires protowire. The copies add
+  `go_package` and the Java and C# options, so generated code from a stored
+  schema resolves to the `protos` packages. Only versions compiled from now on
+  carry them. Source hashes are unchanged.
+
 ## [0.73.0] - 2026-10-29
 
 Schemas written with RFC-001 syntax (Protowire Schema Extensions) now
