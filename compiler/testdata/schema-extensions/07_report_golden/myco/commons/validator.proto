@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 07_report_golden/myco/commons/validator.proto
+// Declared validation functions for the commons library. Bodies live in
+// the engine runtime, registered by fully-qualified name at engine init
+// (RFC-001 §6.5, §9.2).
+//
+// Conformance stub (pinned; see ../../../README.md): implementations
+// register myco.commons.valid_phone as always-pass — the golden
+// instance never invokes it (phone is absent), but runtime-init
+// verification requires every declared function to be registered.
+
+syntax = "proto3";
+
+package myco.commons;
+
+function valid_phone(value: string)
+  [error_code = "myco.commons.phone.invalid"];

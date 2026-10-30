@@ -4,7 +4,7 @@
 package compiler
 
 import (
-	"github.com/bufbuild/protocompile"
+	"github.com/trendvidia/protocompile"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
 

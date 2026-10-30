@@ -223,7 +223,13 @@ The import resolution order during compilation is:
 
 1. **Namespace sources** — the schema's own files + other schemas in the same namespace
 2. **Built-ins** — files from the `__builtins__` namespace
-3. **Google well-known types** — `google/protobuf/*.proto` (provided by protocompile)
+3. **Bundled protowire schemas** — `protowire/schema/v1/annotations.proto`, which
+   every schema using RFC-001 syntax (Protowire Schema Extensions) imports, and
+   `pxf/annotations.proto`, for the PXF field options `(pxf.required)`,
+   `(pxf.default)` and `(pxf.key)`. Both come from the
+   `github.com/trendvidia/protowire` version in `go.mod`. To serve a different
+   copy, publish it to `__builtins__`, which resolves first.
+4. **Google well-known types** — `google/protobuf/*.proto` (provided by protocompile)
 
 ### Well-known type protection
 
@@ -319,6 +325,40 @@ The `RegistryService` exposes the full lifecycle over gRPC:
 | `CreateNamespace` | Create a new namespace |
 
 See [`proto/protoregistry/v1/registry.proto`](proto/protoregistry/v1/registry.proto) for the full definition.
+
+### From the Buf Schema Registry
+
+The API is published as the
+[BSR module `buf.build/trendvidia/protoregistry`](https://buf.build/trendvidia/protoregistry),
+so a client in any language can generate its stubs without this repository:
+
+```yaml
+# buf.yaml
+version: v2
+deps:
+  - buf.build/trendvidia/protoregistry
+```
+
+Each release is pushed under its version tag (for example
+`buf.build/trendvidia/protoregistry:v0.73.0`). Pin the same version as
+the server you talk to.
+
+Go clients should import this module's own package,
+`github.com/trendvidia/protoregistry/proto/protoregistry/v1`, rather than
+generate `registry.proto` again: a second Go copy registers the same
+`protoregistry.v1` names, which protobuf-go reports as a registration
+conflict. If your own `.proto` files
+import `registry.proto` and you use managed mode's `go_package_prefix`,
+disable it for this module so the generated code imports that package:
+
+```yaml
+# buf.gen.yaml
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/trendvidia/protoregistry
+```
 
 ## Type Resolution
 

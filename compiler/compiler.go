@@ -17,8 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bufbuild/protocompile"
-	"github.com/bufbuild/protocompile/linker"
+	"github.com/trendvidia/protocompile"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -152,8 +151,8 @@ func New(opts ...CompilerOption) *Compiler {
 //     namespace; resolve after the parent chain but before Google WKT.
 //
 // Resolution order: child sources & same-ns deps → parent chain tiers
-// (nearest first) → builtins → Google well-known types. First file whose
-// path matches wins (decision D7).
+// (nearest first) → builtins → bundled protowire schemas → Google
+// well-known types. First file whose path matches wins (decision D7).
 //
 // Compile does not perform cross-tier FQN collision detection (D2). Callers
 // that need it should invoke DetectFQNConflicts on the resulting snapshot
@@ -207,6 +206,7 @@ func (c *Compiler) Compile(
 	//   child namespace (own sources + deps)
 	//     → parent chain (nearest first)
 	//     → builtins
+	//     → bundled protowire schemas
 	//     → Google well-known types
 	resolver := buildResolverChain(sources, deps, parentChain, builtins)
 
@@ -252,11 +252,7 @@ func (c *Compiler) Compile(
 			addFile(imports.Get(i).FileDescriptor)
 		}
 		fileDescriptors = append(fileDescriptors, fd)
-		if lr, ok := fd.(linker.Result); ok {
-			fds.File = append(fds.File, lr.FileDescriptorProto())
-		} else {
-			fds.File = append(fds.File, protodesc.ToFileDescriptorProto(fd))
-		}
+		fds.File = append(fds.File, protodesc.ToFileDescriptorProto(fd))
 	}
 	for _, file := range compiled {
 		addFile(file)
@@ -312,7 +308,7 @@ func Version() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range info.Deps {
 			switch dep.Path {
-			case "github.com/bufbuild/protocompile":
+			case "github.com/trendvidia/protocompile":
 				protocompileVersion = dep.Version
 			case "google.golang.org/protobuf":
 				protobufVersion = dep.Version
@@ -337,7 +333,7 @@ func buildResolverChain(
 	parentChain []ChainTier,
 	builtins []DepSource,
 ) protocompile.Resolver {
-	tiers := make(protocompile.CompositeResolver, 0, 2+len(parentChain))
+	tiers := make(protocompile.CompositeResolver, 0, 3+len(parentChain))
 
 	// Tier 1: child namespace (own sources + same-namespace deps).
 	tiers = append(tiers, sourceMapResolver(sources, deps))
@@ -354,6 +350,10 @@ func buildResolverChain(
 	if len(builtins) > 0 {
 		tiers = append(tiers, sourceMapResolver(nil, builtins))
 	}
+
+	// Tier N+2: the protowire schemas bundled with protoregistry. After
+	// builtins, so an operator's own copy there wins.
+	tiers = append(tiers, bundledResolver())
 
 	// Outermost: Google well-known types.
 	return protocompile.WithStandardImports(tiers)
