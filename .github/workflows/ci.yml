@@ -34,14 +34,14 @@ jobs:
   buf-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: bufbuild/buf-setup-action@v1
       - run: make buf-lint
 
   buf-format-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: bufbuild/buf-setup-action@v1
       - run: make buf-format-check
 
@@ -52,7 +52,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # buf breaking needs full history so it can resolve the base ref.
           fetch-depth: 0
@@ -77,7 +77,7 @@ jobs:
   headers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: ./scripts/add-license-header.sh --check
 
   # Unit tests don't need Docker (no PostgreSQL container).

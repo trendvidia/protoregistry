@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 20_sensitive_class
+// Exercises: the @sensitive classification parameter (§6.7, issue
+// #111) at all three attachment sites, plus every arm of the
+// effective-class rule — nearest @sensitive that specifies a class
+// wins (field, then alias chain most-derived first, then message),
+// and a bare @sensitive reasserts sensitivity without reclassifying.
+//
+// Expected behavior (compile + lowering only; class never appears in
+// reports, so there is no golden):
+//   - Every @sensitive use site lowers to a standard 1327 Annotation
+//     carrying its class argument (or no args for the bare form);
+//     consumers compute the effective class per §6.7.
+//   - Effective classes for fixtures.sensclass.Vault:
+//       api_key       -> "credentials"   (alias ApiKey)
+//       rotation_key  -> "credentials"   (derived alias RotationKey is
+//                        bare @sensitive: reasserts, inherits ApiKey's
+//                        class — never erases it)
+//       admin_key     -> "admin"         (field annotation overrides
+//                        the alias chain: field is nearest)
+//       password      -> "credentials"   (field-level class, no alias)
+//       nickname      -> ""              (bare @sensitive on the
+//                        field: sensitive but unclassified)
+//       card          -> "payment"       (message-level class on
+//                        CardData, transitive through the field)
+//       card.pan      -> "payment"       (message-level class; the
+//                        field's own bare @sensitive reasserts)
+//       card.cvv      -> "payment.cvv"   (field annotation is nearer
+//                        than the message marker)
+//   - The redaction minima (§6.7) apply identically to every field
+//     above regardless of class, including nickname's "".
+
+syntax = "proto3";
+
+package fixtures.sensclass;
+
+import "protowire/schema/v1/annotations.proto";
+
+// Class via the type alias: every consuming field classifies as
+// "credentials" unless a nearer @sensitive specifies a class.
+type ApiKey = string
+  @sensitive(class = "credentials")
+  @validate(this.size() == 32,
+            code = "auth.key.length",
+            message = "API key must be 32 characters");
+
+// Derived alias with a bare @sensitive: reasserts sensitivity,
+// inherits "credentials" from ApiKey (rule 3 — never erases).
+type RotationKey = ApiKey
+  @sensitive;
+
+// Class via the message: every field is sensitive with class
+// "payment", transitively through message-typed consumers.
+@sensitive(class = "payment")
+message CardData {
+  // Bare @sensitive on the field reasserts; effective class stays
+  // "payment" from the message marker.
+  string pan = 1
+    @sensitive
+    @validate(this.size() >= 12,
+              code = "payment.pan.short",
+              message = "PAN too short");
+
+  // Field-level class is nearest: overrides the message-level class.
+  string cvv = 2 @sensitive(class = "payment.cvv");
+}
+
+message Vault {
+  ApiKey api_key = 1;
+
+  RotationKey rotation_key = 2;
+
+  // Field-level class overrides the ApiKey alias chain.
+  ApiKey admin_key = 3 @sensitive(class = "admin");
+
+  // Class via the field annotation alone.
+  string password = 4
+    @sensitive(class = "credentials")
+    @validate(this.size() >= 12,
+              code = "auth.password.short",
+              message = "password too short");
+
+  // Bare @sensitive on a plain field: sensitive but unclassified ("").
+  string nickname = 5 @sensitive;
+
+  CardData card = 6;
+
+  // Control: NOT sensitive, no class.
+  string username = 7;
+}

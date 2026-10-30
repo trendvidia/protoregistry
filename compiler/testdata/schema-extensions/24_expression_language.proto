@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Fixture: 24_expression_language
+// Exercises: the normative expression language (§5.4, issue #282) —
+// every builtin in both its method form and its function form,
+// now() against a Timestamp field, every operator, every literal
+// kind, nested parentheses, a declared-function call, and a type
+// alias rule propagated onto a repeated field (§6.4: per element).
+//
+// Expected behavior (compile + lowering only; evaluation is pinned by
+// the reference engine's own suite, so there is no golden):
+//   - Every rule compiles: a conformant compiler parses each capture
+//     under the §5.4 grammar and finds no unresolved call and no
+//     syntax error.
+//   - Every rule lowers to a standard 1327 Annotation whose
+//     Expression.source is the capture verbatim and whose
+//     Expression.calls names exactly the declared-function calls
+//     (`in_region` on `country`, `same_domain` on the message) —
+//     never a builtin, never `now()`.
+//   - The alias rule on `Tag` propagates onto `tags` and evaluates per
+//     element with `this` bound to each string; the field's own rule
+//     on `tags` sees the whole list.
+
+syntax = "proto3";
+
+package fixtures.exprlang;
+
+import "google/protobuf/timestamp.proto";
+import "protowire/schema/v1/annotations.proto";
+
+function in_region(value: string, regions: string);
+function same_domain(profile: Profile);
+
+// Method form and function form of the same builtin are the same call.
+type Tag = string @validate(this.size() >= 2 && size(this) <= 16);
+
+@validate(same_domain(this))
+message Profile {
+  string email = 1
+    @validate(this.contains("@") && contains(this, "@"))
+    @validate(matches(this, "^[^@]+@[^@]+$") && this.matches("[.]"))
+    @validate(!this.starts_with("@") && !ends_with(this, "@"), code = "profile.email.shape");
+
+  string handle = 2
+    @validate(starts_with(this, "u_") || this.ends_with("_bot") || this == "root");
+
+  string country = 3
+    @validate(this in ["US", "CA", "GB"] && in_region(this, "NA"));
+
+  int32 age = 4
+    @validate(this >= 0 && this < 150 && this != 42);
+
+  double score = 5
+    @validate((this > 0.0 && this <= 1.0) || (this == 2.5));
+
+  bool verified = 6
+    @validate(this == true || this == false);
+
+  bytes token = 7
+    @validate(this.size() == 32);
+
+  repeated Tag tags = 8
+    @validate(size(this) <= 5);
+
+  map<string, int32> limits = 9
+    @validate(this.size() > 0);
+
+  google.protobuf.Timestamp expires = 10
+    @validate(this > now());
+}

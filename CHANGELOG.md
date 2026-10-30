@@ -9,6 +9,63 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.73.0] - 2026-10-29
+
+Schemas written with RFC-001 syntax (Protowire Schema Extensions) now
+publish, with no setup. The registry compiles with the trendvidia/protocompile
+fork, stores the RFC-001 carriers unchanged, and bundles the two protowire
+schemas such schemas import. The gRPC API is published to the Buf Schema
+Registry, and the server ships as a container image on GHCR. Source hashes
+are unchanged, and the client API has no changes.
+
+### Added
+
+- **Two protowire schemas are bundled** (#33):
+  `protowire/schema/v1/annotations.proto`, which every schema using RFC-001
+  syntax imports, and `pxf/annotations.proto`, for the PXF field options
+  `(pxf.required)`, `(pxf.default)` and `(pxf.key)`. A schema importing
+  either now publishes with no setup. It used to fail with "imported file
+  does not exist" until an operator published the file to `__builtins__`.
+  They resolve after `__builtins__` (an operator's own copy still wins) and
+  before Google's well-known types. The copies come from the
+  `github.com/trendvidia/protowire` module (v1.13.0), which raises grpc to
+  v1.84.0 and golang.org/x/net to v0.58.0 through its requirements.
+- **The gRPC API is on the Buf Schema Registry** as
+  [`buf.build/trendvidia/protoregistry`](https://buf.build/trendvidia/protoregistry)
+  (#37), pushed on each release tag and labelled with it. A client in any
+  language can generate its stubs from there; the README's gRPC API section
+  shows the `deps` entry and the managed-mode setting Go clients need.
+- **Container image on GHCR**: `ghcr.io/trendvidia/protoregistry`, built for
+  `linux/amd64` and `linux/arm64` (#18, #19, #20). A release tag publishes
+  `X.Y.Z` (no `v`), `X.Y` and `latest`; `main` publishes a rolling `main`
+  tag. This release: `ghcr.io/trendvidia/protoregistry:0.73.0`.
+
+### Changed
+
+- **Schemas are compiled with the trendvidia/protocompile fork**
+  (v0.35.1, from `bufbuild/protocompile` v0.14.1), so a schema written
+  with RFC-001 syntax (Protowire Schema Extensions: annotations,
+  `function` and `type` declarations) publishes. The compiler lowers that
+  syntax into the carrier options (`protowire.schema.v1`, fields
+  1327–1331) and protoregistry stores them unchanged: the stored
+  descriptors equal what the toolchain alone produces, byte for byte, and
+  they come back byte-identical through `Restore` and `GetDescriptor`.
+  The schema's `import "protowire/schema/v1/annotations.proto"` resolves
+  from the bundled copy (see Added).
+  - Source hashes (deduplication and change detection) are unchanged: of
+    1,227 distinct `.proto` files, every one that both parsers accept
+    hashes the same. Fourteen proto2 files with unlabelled fields are now
+    rejected when parsed rather than when compiled; they were rejected
+    before too.
+- **protowire-go v1.0.0 → v1.12.0** (used by `protoregistry ctl` for PXF
+  output).
+
+### Chores
+
+- Dependency upgrades: grpc to v1.84.0 (#26, #30, and through protowire),
+  pgx v5.10.0 (#27), testcontainers v0.43.0 (#29); GitHub Actions
+  `actions/checkout` v7 and the Docker build actions (#21–#25, #28).
+
 ## [0.72.0] - 2026-05-19
 
 Small additive release: TLS transport credentials for `Dial`.

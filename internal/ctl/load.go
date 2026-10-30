@@ -4,14 +4,16 @@
 package ctl
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/bufbuild/protocompile/parser"
-	"github.com/bufbuild/protocompile/reporter"
 	"github.com/spf13/cobra"
+	"github.com/trendvidia/protocompile/parser"
+	"github.com/trendvidia/protocompile/report"
+	"github.com/trendvidia/protocompile/source"
 
 	registrypb "github.com/trendvidia/protoregistry/proto/protoregistry/v1"
 )
@@ -229,19 +231,23 @@ func scanProtos(dir string) ([]protoFile, error) {
 }
 
 // extractImports parses a proto file and returns its import paths.
+// An `import option` names a file used only for custom options, not a
+// dependency, so it is left out, as protoc leaves it out of
+// FileDescriptorProto.dependency.
 func extractImports(filename string, content []byte) ([]string, error) {
-	node, err := parser.Parse(filename, strings.NewReader(string(content)), reporter.NewHandler(nil))
-	if err != nil {
-		return nil, err
+	rpt := &report.Report{}
+	file, _ := parser.Parse(filename, source.NewFile(filename, string(content)), rpt)
+	for i := range rpt.Diagnostics {
+		if d := &rpt.Diagnostics[i]; d.Level() <= report.Error {
+			return nil, errors.New(d.Message())
+		}
 	}
-	result, err := parser.ResultFromAST(node, true, reporter.NewHandler(nil))
-	if err != nil {
-		return nil, err
-	}
-	deps := result.FileDescriptorProto().Dependency
-	imports := make([]string, len(deps))
-	for i, dep := range deps {
-		imports[i] = strings.TrimSpace(dep)
+	var imports []string
+	for decl := range file.Imports() {
+		if decl.IsOption() {
+			continue
+		}
+		imports = append(imports, strings.TrimSpace(decl.ImportPath().AsLiteral().AsString().Text()))
 	}
 	return imports, nil
 }
