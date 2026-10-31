@@ -9,6 +9,27 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.75.0] - 2026-10-30
+
+Takes protocompile v0.37.0, protowire-go v1.13.0 and protos v0.1.4. Schemas and
+PXF documents are checked more strictly, so one accepted before can now be
+refused. There is no API change, and no `buf.build` module is left in the
+module graph.
+
+### Changed
+
+- **Bumped protocompile from v0.35.1 to v0.37.0** (#50). **Breaking:** the
+  compiler now enforces the annotation placement table, refuses `required` and
+  `default` on one field, and checks expression defaults, so a schema that
+  compiled under v0.35.1 can be refused.
+- **Bumped protowire-go from v1.12.0 to v1.13.0** (#50, #52). **Breaking:** maps
+  and PB map entries now count toward `MaxNestingDepth`, so a deeply nested
+  document that used to decode can fail, and `(pxf.required)` with
+  `(pxf.default)` on one field no longer binds.
+- **Bumped protos from v0.1.3 to v0.1.4** (#52).
+- Tag pushes and release PRs now run the shared release dependency check, which
+  refuses a `replace` or an untagged stack dependency (#49, #51).
+
 ## [0.74.0] - 2026-10-30
 
 `client` now builds on stock `google.golang.org/protobuf`, so a program importing
