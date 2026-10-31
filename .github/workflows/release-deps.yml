@@ -15,7 +15,11 @@ permissions:
 
 jobs:
   check:
-    if: github.event_name != 'pull_request' || startsWith(github.event.pull_request.title, 'release:')
+    # A release PR is titled `release:` or `chore: release vX.Y.Z`.
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.event.pull_request.title, 'release:') ||
+      startsWith(github.event.pull_request.title, 'chore: release v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
