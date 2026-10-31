@@ -1,0 +1,22 @@
+# Refuse a replace or an untagged stack dependency at release. See
+# https://github.com/trendvidia/protowire/tree/main/.github/actions/check-release-deps
+
+name: Release dependencies
+
+on:
+  push:
+    tags: ['v*', '**/v*']
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request' || startsWith(github.event.pull_request.title, 'release:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: trendvidia/protowire/.github/actions/check-release-deps@main
