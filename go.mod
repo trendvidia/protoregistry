@@ -10,8 +10,8 @@ require (
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/trendvidia/protocompile v0.37.0
-	github.com/trendvidia/protos v0.1.3
-	github.com/trendvidia/protowire-go v1.12.1
+	github.com/trendvidia/protos v0.1.4
+	github.com/trendvidia/protowire-go v1.13.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
