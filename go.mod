@@ -83,3 +83,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260807164820-c8921c73eeea // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260729162451-8efbd57d26e0 // indirect
 )
+
+require github.com/trendvidia/release-deps-proof v0.0.0-20260101000000-abcdefabcdef
