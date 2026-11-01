@@ -9,6 +9,12 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+### Changed
+
+- **Bumped protocompile from v0.37.0 to v0.38.1 and protowire-go from v1.13.0 to
+  v1.13.2.** No compiler change. protowire-go's `Violation.Name` now holds the
+  `(pxf.default)` literal for `(pxf.required)` with `(pxf.default)` on one field.
+
 ## [0.75.0] - 2026-10-30
 
 Takes protocompile v0.37.0, protowire-go v1.13.0 and protos v0.1.4. Schemas and
