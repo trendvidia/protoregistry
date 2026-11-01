@@ -9,10 +9,15 @@ version — see [`STABILITY.md`](STABILITY.md).
 
 ## Unreleased
 
+## [0.75.1] - 2026-10-31
+
+Takes protocompile v0.38.1 and protowire-go v1.13.2. The compiler behaves the
+same, and there is no API change.
+
 ### Changed
 
 - **Bumped protocompile from v0.37.0 to v0.38.1 and protowire-go from v1.13.0 to
-  v1.13.2.** No compiler change. protowire-go's `Violation.Name` now holds the
+  v1.13.2** (#54). No compiler change. protowire-go's `Violation.Name` now holds the
   `(pxf.default)` literal for `(pxf.required)` with `(pxf.default)` on one field.
 
 ## [0.75.0] - 2026-10-30
