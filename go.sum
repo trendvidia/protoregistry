@@ -147,8 +147,8 @@ github.com/trendvidia/protocompile v0.38.1 h1:re1MMH6toErAPYXKYOE9atomZOQLUPeeew
 github.com/trendvidia/protocompile v0.38.1/go.mod h1:WbN5LRddJxOCdAC9pi2yI5djQ1E6g2uTli/9DwrjZ6Y=
 github.com/trendvidia/protos v0.1.4 h1:uKa2KUCKDFmAHT0iIuypwoUv+k7dM/u1d1zUWPV00kA=
 github.com/trendvidia/protos v0.1.4/go.mod h1:NPP4w6dOu7BkD8psH0cWJamHHiEpi8QfgP88vKkMXUI=
-github.com/trendvidia/protowire-go v1.13.2 h1:xFiNm4JWrIoTdk1vNp7RzmyAW0rS8IAveoSV20U7Bwg=
-github.com/trendvidia/protowire-go v1.13.2/go.mod h1:55QaDXgzv0Q6jq9pTzzyTuwEF88bWDkf0TU8XwGYS7k=
+github.com/trendvidia/protowire-go v1.14.0 h1:XeH/EkRRXlvMTXo9P/lchplMO3aAzbn3HPu30cVcesI=
+github.com/trendvidia/protowire-go v1.14.0/go.mod h1:55QaDXgzv0Q6jq9pTzzyTuwEF88bWDkf0TU8XwGYS7k=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

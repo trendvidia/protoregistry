@@ -11,7 +11,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/trendvidia/protocompile v0.38.1
 	github.com/trendvidia/protos v0.1.4
-	github.com/trendvidia/protowire-go v1.13.2
+	github.com/trendvidia/protowire-go v1.14.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
