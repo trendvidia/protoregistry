@@ -2,7 +2,7 @@
 
 | Field    | Value                                       |
 |----------|---------------------------------------------|
-| Status   | Draft                                       |
+| Status   | Implemented: phases 1–5 in #8 and #9 (2026-05-15); phase 6 is protolsp's |
 | Date     | 2026-05-14                                  |
 | Scope    | `namespace/`, `resolve/`, `compiler/`, `registry.go`, `proto/`, `migrations/`, `server/`, `store/` |
 | Related  | `protolsp` (downstream consumer, blocked on this work) |
