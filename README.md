@@ -4,7 +4,7 @@ A multi-namespace protobuf schema registry for Go, with versioning, staging, bac
 
 > **Status:** `v0.x` pre-stable. The gRPC service in `proto/protoregistry/v1/` is the durable integration point; the Go library API may change at minor versions until `v1.0`. See [`STABILITY.md`](STABILITY.md) for the full contract.
 
-Protoregistry compiles `.proto` files at runtime using [protocompile](https://github.com/bufbuild/protocompile), stores versioned schemas in PostgreSQL with content-addressable deduplication, and serves compiled descriptors for dynamic message creation and validation via gRPC.
+Protoregistry compiles `.proto` files at runtime using [protocompile](https://github.com/trendvidia/protocompile) (TrendVidia's copy of Buf's compiler), stores versioned schemas in PostgreSQL with content-addressable deduplication, and serves compiled descriptors for dynamic message creation and validation via gRPC.
 
 ## Features
 
@@ -494,11 +494,11 @@ PostgreSQL — without adopting a broader platform.
 |-----------------------------------------------|:-------------:|:----------------------------------------------------:|:--------------------------------------------------------------------------------------------------:|
 | Self-hosted (single Go binary + Postgres)     | ✓             | hosted / BSR Pro                                     | ✓ (Kafka-coupled)                                                                                  |
 | Multi-tenant namespace isolation (chroot)     | ✓             | modules                                              | subjects                                                                                           |
-| Two-phase staging + atomic multi-schema promote | ✓           | drafts                                               | —                                                                                                  |
+| Two-phase staging + atomic multi-schema promote | ✓           | labels (per module)                                  | —                                                                                                  |
 | Backward-compat enforcement at promote        | ✓             | ✓                                                    | ✓ (per-subject)                                                                                    |
 | Embeddable as a Go library                    | ✓             | —                                                    | —                                                                                                  |
 | Lock-free hot-swap of compiled descriptors    | ✓             | n/a                                                  | n/a                                                                                                |
-| Built-in dynamic message creation             | `dynamicpb`   | —                                                    | —                                                                                                  |
+| Dynamic messages built in-process (`dynamicpb`) | ✓           | descriptors over the Reflection API                  | —                                                                                                  |
 | Wire-format support                           | protobuf      | protobuf                                             | Avro / JSON / protobuf                                                                             |
 
 If you need a polished SaaS, lint rules, code generation, or a wide
